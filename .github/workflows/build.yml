@@ -1,0 +1,118 @@
+name: build
+
+on:
+  workflow_dispatch:
+  # The gates (desktop-platform Governance §4) on every PR too.
+  pull_request:
+  push:
+    # main builds keep the Rust cache warm: a tag build can only restore caches
+    # saved on the default branch, so without these every release compiled all
+    # dependencies from scratch.
+    branches: [main]
+    tags: ["v*"]
+    # Not applied to tag pushes (GitHub ignores path filters for tags).
+    paths-ignore: ["**.md", "docs/**"]
+
+# A newer push to main supersedes the running build; tag builds always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+# A release pushes its version bump ("chore: vX.Y.Z") to main and tags the
+# same commit: the tag build tests and builds it, so main skips both. Other
+# pushes to main still build, to catch macOS / Windows breakage before a
+# release and to save the Rust cache when dependencies change.
+jobs:
+  test:
+    if: "github.ref_type == 'tag' || !startsWith(github.event.head_commit.message, 'chore: v')"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux deps for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Bun installs the packages (bun.lock); Vite and the Tauri CLI still run on Node.js.
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun run lint
+
+  # Runs alongside `test` rather than after it. A tag build only creates a
+  # draft release, so a failing test still stops it from being published.
+  # Bindery: tags and manual runs only, for now. The updater key is a
+  # temporary one with no private key in Secrets (decisions/project-context.md),
+  # so a build on main would always fail at signing.
+  build:
+    if: "github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'"
+    # Needed to create the GitHub Release and upload installers to it.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon only (macos-latest runners are arm64).
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Only main saves (see `on.push`); saving on tags took ~2 min and the
+          # cache could never be used again.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # tauri-action sees bun.lock and runs the Tauri CLI through Bun.
+      - run: bun install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts (.app.tar.gz / -setup.exe .sig). The
+          # matching public key is in tauri.conf.json; without this the build
+          # fails because createUpdaterArtifacts is on.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.args }}
+          # latest.json for the in-app updater is attached to the release too.
+          # It points at releases/latest/download/..., so the updater only sees
+          # a version once its draft release has been published.
+          updaterJsonPreferNsis: true
+          # On a v* tag: create a draft release for it and attach the installers.
+          # Manual runs (no tag) only produce the Actions artifacts below.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ github.ref_name }}
+          # Only the installer line: the change notes are written by hand before
+          # publishing (desktop-platform playbook/release.md).
+          releaseBody: "インストーラ：macOS（Apple Silicon）は .dmg、Windows は -setup.exe"
+          releaseDraft: true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bindery-${{ matrix.platform }}
+          path: |
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/macos/*.tar.gz
+            src-tauri/target/**/release/bundle/macos/*.sig
+            src-tauri/target/**/release/bundle/nsis/*.exe
+            src-tauri/target/**/release/bundle/nsis/*.sig

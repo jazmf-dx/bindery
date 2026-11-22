@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+/*
+ * `dark:` is the dark theme: <html data-theme="dark"> (lib/appearance.ts sets it
+ * from the OS or the user's choice).
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+}
+
+@theme {
+  --color-bg: #1b1c1f;
+  --color-panel: #232428;
+  --color-raised: #2c2d32;
+  --color-line: #34353b;
+  --color-fg: #e6e6e8;
+  --color-dim: #9a9ba3;
+  --color-accent: #4c8dff;
+  /*
+   * Control colours (stockroom の docs/UI.md「色」). Dark here; the light theme swaps these
+   * values below (follows the system). `ink` at an alpha (white in dark, black
+   * in light), so a control reads the same on the toolbar, a panel or a dialog.
+   */
+  /* Text and overlays that flip with the theme: use `bg-ink/10`, not `bg-white/10`. */
+  --color-ink: #fff;
+  /* An input field, and a sunken band. */
+  --color-field: #151619;
+  --color-stage: #000;
+  --color-band: rgb(0 0 0 / 0.18);
+  --color-scroll: #45464d;
+  --color-on-chosen: #fff;
+  --color-track-edge: rgb(255 255 255 / 0.06);
+  /* A control's face, one step above the surface it sits on. */
+  --color-control: rgb(255 255 255 / 0.08);
+  /* A control's outline: 3:1 against the panel (WCAG 1.4.11). */
+  --color-edge: rgb(255 255 255 / 0.34);
+  /* The chosen segment of a segmented control (neutral, as on macOS): the thumb in the track. */
+  --color-chosen: rgb(255 255 255 / 0.2);
+  /* A segmented control's track, sunk below the surface. */
+  --color-track: rgb(0 0 0 / 0.28);
+  /* Quiet controls (toolbars, chips): no face at rest; these on hover and while pressed. */
+  --color-hover: rgb(255 255 255 / 0.1);
+  --color-press: rgb(255 255 255 / 0.16);
+  /* The outline that holds a group of quiet controls together (sort order and its direction). */
+  --color-frame: rgb(255 255 255 / 0.22);
+  /* A pressed toggle (on), and an active filter. */
+  --color-tonal: #344a73;
+  --color-tonal-edge: #7d9fd8;
+  --color-on-tonal: #d6e3ff;
+  /* Fill under white text (a primary button, a menu's highlighted row): 4.7:1. */
+  --color-accent-fill: #2f6fe0;
+  /* Disabled: text and outline dimmed on their own, never the whole control by opacity. */
+  --color-off: rgb(255 255 255 / 0.5);
+  --color-off-edge: rgb(255 255 255 / 0.14);
+  --color-danger: #ef5d5d;
+  --color-success: #3ec27f;
+}
+
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #fbfbfc;
+  --color-panel: #f2f2f4;
+  --color-raised: #ffffff;
+  --color-line: #d9dadf;
+  --color-fg: #1d1d1f;
+  --color-dim: #5f626a;
+  --color-accent: #1a63d8;
+  --color-ink: #000;
+  --color-field: #ffffff;
+  --color-stage: #ececef;
+  --color-band: rgb(0 0 0 / 0.05);
+  --color-scroll: #c3c4ca;
+  --color-on-chosen: #1d1d1f;
+  --color-track-edge: rgb(0 0 0 / 0.04);
+  --color-control: rgb(0 0 0 / 0.05);
+  --color-edge: rgb(0 0 0 / 0.45);
+  --color-chosen: #ffffff;
+  --color-track: rgb(0 0 0 / 0.08);
+  --color-hover: rgb(0 0 0 / 0.06);
+  --color-press: rgb(0 0 0 / 0.1);
+  --color-frame: rgb(0 0 0 / 0.22);
+  --color-tonal: #d9e6ff;
+  --color-tonal-edge: #4c7fd4;
+  --color-on-tonal: #12336b;
+  --color-off: rgb(0 0 0 / 0.58);
+  --color-off-edge: rgb(0 0 0 / 0.14);
+  --color-danger: #d02a2a;
+  --color-success: #167a48;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* macOS: the page runs under the title bar, with the window buttons over its
+   top left (src/lib/titleBar.ts). Room left for them; none in full screen,
+   where they are hidden, and none on Windows, which keeps its title bar. */
+:root {
+  --titlebar: 0px;
+  --traffic-lights: 0px;
+}
+:root[data-titlebar="overlay"]:not([data-fullscreen]) {
+  --titlebar: 40px;
+  --traffic-lights: 84px;
+}
+
+/* macOS: the window is transparent over a translucent material (src-tauri
+   lib.rs). The sidebar lets it show through, blurred; the rest of the page
+   is opaque (App.tsx paints the main area). */
+:root[data-titlebar="overlay"] body {
+  background: transparent;
+}
+:root[data-titlebar="overlay"] .vibrant {
+  background: color-mix(in srgb, var(--color-panel) 55%, transparent);
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Meiryo",
+    sans-serif;
+  font-size: 13px;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-scroll);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * Disabled controls (`disabled:off`): the text and the outline go down on
+ * their own, so the label stays readable (5:1) while the control reads as
+ * flat and not pressable. Never the whole control by opacity (stockroom の docs/UI.md「色」).
+ */
+@utility off {
+  color: var(--color-off);
+  border-color: var(--color-off-edge);
+  cursor: default;
+  filter: none;
+}
+
+/*
+ * Quiet controls (stockroom の docs/UI.md「色」): toolbars, chips and bars show no face or
+ * outline until hovered, so only what is on (tonal) or chosen stands out.
+ */
+@utility ghost {
+  /* Never an outline, not even disabled (off would draw one). */
+  border: 1px solid transparent !important;
+  &:hover:not(:disabled) {
+    background-color: var(--color-hover);
+  }
+  &:active:not(:disabled) {
+    background-color: var(--color-press);
+  }
+}
+/* A segmented control: the items sit in a sunken track, the chosen one on a thumb. */
+@utility track {
+  background-color: var(--color-track);
+  box-shadow: inset 0 0 0 1px var(--color-track-edge);
+  padding: 2px;
+  gap: 2px;
+}
+@utility thumb {
+  background-color: var(--color-chosen);
+  color: var(--color-on-chosen);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
