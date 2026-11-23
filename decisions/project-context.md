@@ -14,7 +14,7 @@ AI と人が実装前に確認する **現在の前提**。機能要件、ロー
 | 配布の形 | 単独リポジトリ（tag `v*`、feed `https://github.com/jazmf-dx/bindery/releases/latest/download/latest.json`） |
 | 識別子 | `com.local.bindery`、`productName` は `Bindery`（一度配布したら変えない） |
 | updater の鍵 | **一時的な鍵**（Typecase と同じ扱い）。公開鍵だけを `tauri.conf.json` に入れ、秘密鍵は保存していない。この鍵では配布できないので、本番の配布の前に owner（jazmf-dx）の鍵に替え、Secrets を設定する（desktop-platform playbook/updater-key.md） |
-| アイコン | 仮（`app-icon.svg`）。人が決める |
+| アイコン | `app-icon.svg`（色の束：3 色の書類を白い背でまとめる）。`bunx tauri icon app-icon.svg` で `src-tauri/icons/` を作る |
 | desktop-base | 未採用（まだ無い）。stockroom の `eadf712` から土台を写した（desktop-platform playbook/new-tool.md「desktop-base がまだ無いとき」） |
 
 ## stockroom から写したときに変えたところ
