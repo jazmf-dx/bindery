@@ -194,3 +194,9 @@ textarea {
     0 1px 2px rgb(0 0 0 / 0.4),
     inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
+
+/* 一覧からのドラッグ中（DragLayer.tsx）：どこでもつかんだ手の形にし、文字を選ばない。 */
+:root[data-dragging],
+:root[data-dragging] * {
+  cursor: grabbing !important;
+}

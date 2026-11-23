@@ -305,6 +305,8 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
             ))
         },
     )?;
+    // つなぎ直す前に新しい行へ付けたタグ・仮想フォルダも引き継ぐ
+    db::copy_organization(&tx, id, lost)?;
     tx.execute("DELETE FROM files WHERE id = ?1", [id])?;
     tx.execute(
         "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, mtime = ?6,
@@ -331,8 +333,8 @@ mod tests {
         apply(conn, root, walk(dir)).unwrap();
     }
 
-    fn names(conn: &Connection, view: db::View) -> Vec<String> {
-        db::list_files(conn, view, None)
+    fn names(conn: &Connection, view: db::Place) -> Vec<String> {
+        db::list_files(conn, view)
             .unwrap()
             .into_iter()
             .map(|f| f.name)
@@ -351,8 +353,8 @@ mod tests {
         fs::write(d.join(".hidden.txt"), "x").unwrap();
         fs::write(d.join("sub/.git/c.txt"), "x").unwrap();
         scan(&mut conn, root, d);
-        assert_eq!(names(&conn, db::View::All), ["a.pdf", "b.XLSX"]);
-        let b = db::list_files(&conn, db::View::All, None).unwrap();
+        assert_eq!(names(&conn, db::Place::All), ["a.pdf", "b.XLSX"]);
+        let b = db::list_files(&conn, db::Place::All).unwrap();
         assert_eq!(b[1].ext, "xlsx");
     }
 
@@ -362,15 +364,15 @@ mod tests {
         let d = dir.path();
         fs::write(d.join("a.pdf"), "a").unwrap();
         scan(&mut conn, root, d);
-        let before = db::list_files(&conn, db::View::All, None).unwrap()[0].id;
+        let before = db::list_files(&conn, db::Place::All).unwrap()[0].id;
         fs::create_dir(d.join("sub")).unwrap();
         fs::rename(d.join("a.pdf"), d.join("sub/renamed.pdf")).unwrap();
         scan(&mut conn, root, d);
-        let files = db::list_files(&conn, db::View::All, None).unwrap();
+        let files = db::list_files(&conn, db::Place::All).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, before);
         assert_eq!(files[0].name, "renamed.pdf");
-        assert!(names(&conn, db::View::Missing).is_empty());
+        assert!(names(&conn, db::Place::Missing).is_empty());
     }
 
     #[test]
@@ -383,22 +385,22 @@ mod tests {
         while let Some((id, path)) = next_unhashed(&conn).unwrap() {
             record_hash(&mut conn, id, hash_file(&path).ok().as_deref()).unwrap();
         }
-        let before = db::list_files(&conn, db::View::All, None).unwrap()[0].id;
+        let before = db::list_files(&conn, db::Place::All).unwrap()[0].id;
         // 消して、同じ中身を別のファイルとして作る（ファイル ID は変わる）
         fs::remove_file(d.join("a.pdf")).unwrap();
         scan(&mut conn, root, d);
-        assert_eq!(names(&conn, db::View::Missing), ["a.pdf"]);
+        assert_eq!(names(&conn, db::Place::Missing), ["a.pdf"]);
         fs::write(d.join("copy.pdf"), "same").unwrap();
         scan(&mut conn, root, d);
         // 同じ inode が使い回されればファイル ID で、そうでなければハッシュでつながる
         while let Some((id, path)) = next_unhashed(&conn).unwrap() {
             record_hash(&mut conn, id, hash_file(&path).ok().as_deref()).unwrap();
         }
-        let files = db::list_files(&conn, db::View::All, None).unwrap();
+        let files = db::list_files(&conn, db::Place::All).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, before);
         assert_eq!(files[0].name, "copy.pdf");
-        assert!(names(&conn, db::View::Missing).is_empty());
+        assert!(names(&conn, db::Place::Missing).is_empty());
     }
 
     #[test]
@@ -412,12 +414,16 @@ mod tests {
             [root],
         )
         .unwrap();
+        let tag = db::ensure_tag(&conn, "t").unwrap();
+        db::tag_files(&mut conn, &[2], tag, true).unwrap();
         // 大きさが違えば、ハッシュが同じでもつながない
         assert!(!record_hash(&mut conn, 3, Some("h")).unwrap());
         assert!(record_hash(&mut conn, 2, Some("h")).unwrap());
-        let files = db::list_files(&conn, db::View::All, None).unwrap();
+        let files = db::list_files(&conn, db::Place::All).unwrap();
         let ids: Vec<_> = files.iter().map(|f| (f.id, f.name.as_str())).collect();
         assert_eq!(ids, [(1, "b.pdf"), (3, "c.pdf")]);
+        // 新しい行に付けたタグは、つなぎ直した行へ移る
+        assert_eq!(files[0].tags, [tag]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Rust のコマンド。画面からは src/lib/api.ts のラッパ経由で呼ぶ。
 //! 足したら src/dev/mockBackend.ts も同じ PR で直す。
 
-use crate::db::{self, FileRow, Root, View};
+use crate::db::{self, FileRow, Place, Root, Tag, VFolder};
 use crate::library::{self, Shared};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -47,9 +47,140 @@ pub fn remove_root(lib: State<Shared>, id: i64) -> CmdResult<()> {
     lib.with(|c| db::delete_root(c, id))
 }
 
+/// そのフォルダのファイルのうち、タグか仮想フォルダが付いているものの数（外す前の確認用）。
 #[tauri::command]
-pub fn list_files(lib: State<Shared>, view: View, root_id: Option<i64>) -> CmdResult<Vec<FileRow>> {
-    lib.with(|c| db::list_files(c, view, root_id))
+pub fn root_organized_count(lib: State<Shared>, id: i64) -> CmdResult<i64> {
+    lib.with(|c| db::organized_count(c, id))
+}
+
+#[tauri::command]
+pub fn list_files(lib: State<Shared>, place: Place) -> CmdResult<Vec<FileRow>> {
+    lib.with(|c| db::list_files(c, place))
+}
+
+// -------------------------------------------------------------- 開く操作
+
+fn paths(lib: &Shared, ids: &[i64]) -> CmdResult<Vec<String>> {
+    let paths = lib.with(|c| db::paths_of(c, ids))?;
+    if paths.is_empty() && !ids.is_empty() {
+        return Err("ファイルが見つかりません（行方不明）".into());
+    }
+    Ok(paths)
+}
+
+/// 既定のアプリで開く。
+#[tauri::command]
+pub fn open_files(lib: State<Shared>, ids: Vec<i64>) -> CmdResult<()> {
+    for p in paths(&lib, &ids)? {
+        tauri_plugin_opener::open_path(p, None::<&str>).map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Finder / エクスプローラーで表示する（最初の 1 件）。
+#[tauri::command]
+pub fn reveal_file(lib: State<Shared>, id: i64) -> CmdResult<()> {
+    let p = paths(&lib, &[id])?;
+    tauri_plugin_opener::reveal_item_in_dir(&p[0]).map_err(err)
+}
+
+/// Quick Look（docs/CONCEPT.md「プレビュー」）。開いていれば閉じる。
+#[tauri::command]
+pub fn quick_look(lib: State<Shared>, ids: Vec<i64>) -> CmdResult<()> {
+    let p = if ids.is_empty() {
+        Vec::new()
+    } else {
+        paths(&lib, &ids)?
+    };
+    crate::quicklook::toggle(&p)
+}
+
+// ------------------------------------------------------------------ タグ
+
+fn name_of(name: &str) -> CmdResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("名前が空です".into());
+    }
+    Ok(name.chars().take(100).collect())
+}
+
+#[tauri::command]
+pub fn list_tags(lib: State<Shared>) -> CmdResult<Vec<Tag>> {
+    lib.with(|c| db::list_tags(c))
+}
+
+/// その名前のタグをファイルに付ける（無ければ作る）。付けたタグの id を返す。
+#[tauri::command]
+pub fn add_tag(lib: State<Shared>, ids: Vec<i64>, name: String) -> CmdResult<i64> {
+    let name = name_of(&name)?;
+    lib.with(|c| {
+        let tag = db::ensure_tag(c, &name)?;
+        db::tag_files(c, &ids, tag, true)?;
+        Ok(tag)
+    })
+}
+
+#[tauri::command]
+pub fn set_tag(lib: State<Shared>, ids: Vec<i64>, tag_id: i64, on: bool) -> CmdResult<()> {
+    lib.with(|c| db::tag_files(c, &ids, tag_id, on))
+}
+
+#[tauri::command]
+pub fn create_tag(lib: State<Shared>, name: String) -> CmdResult<i64> {
+    let name = name_of(&name)?;
+    lib.with(|c| db::ensure_tag(c, &name))
+}
+
+#[tauri::command]
+pub fn rename_tag(lib: State<Shared>, id: i64, name: String) -> CmdResult<()> {
+    let name = name_of(&name)?;
+    lib.with(|c| db::rename_tag(c, id, &name))
+}
+
+/// タグを消す。ファイルからも外れる。元のファイルには触らない。
+#[tauri::command]
+pub fn delete_tag(lib: State<Shared>, id: i64) -> CmdResult<()> {
+    lib.with(|c| db::delete_tag(c, id))
+}
+
+// ------------------------------------------------------------ 仮想フォルダ
+
+#[tauri::command]
+pub fn list_vfolders(lib: State<Shared>) -> CmdResult<Vec<VFolder>> {
+    lib.with(|c| db::list_vfolders(c))
+}
+
+#[tauri::command]
+pub fn create_vfolder(lib: State<Shared>, name: String, parent_id: Option<i64>) -> CmdResult<i64> {
+    let name = name_of(&name)?;
+    lib.with(|c| db::create_vfolder(c, &name, parent_id))
+}
+
+#[tauri::command]
+pub fn rename_vfolder(lib: State<Shared>, id: i64, name: String) -> CmdResult<()> {
+    let name = name_of(&name)?;
+    lib.with(|c| db::rename_vfolder(c, id, &name))
+}
+
+/// 仮想フォルダを消す（下の仮想フォルダも）。中のファイルはそのまま。
+#[tauri::command]
+pub fn delete_vfolder(lib: State<Shared>, id: i64) -> CmdResult<()> {
+    lib.with(|c| db::delete_vfolder(c, id))
+}
+
+#[tauri::command]
+pub fn move_vfolder(lib: State<Shared>, id: i64, parent_id: Option<i64>) -> CmdResult<()> {
+    if lib.with(|c| db::move_vfolder(c, id, parent_id))? {
+        Ok(())
+    } else {
+        Err("仮想フォルダを、それ自身の中へは移せません".into())
+    }
+}
+
+#[tauri::command]
+pub fn set_vfolder(lib: State<Shared>, ids: Vec<i64>, vfolder_id: i64, on: bool) -> CmdResult<()> {
+    lib.with(|c| db::file_into_vfolder(c, &ids, vfolder_id, on))
 }
 
 /// すべての登録フォルダを読み直す（照合）。

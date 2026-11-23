@@ -6,6 +6,7 @@ pub mod commands;
 pub mod db;
 pub mod library;
 pub mod proxy;
+pub mod quicklook;
 pub mod scan;
 
 use commands::*;
@@ -118,7 +119,23 @@ pub fn run() {
             list_roots,
             add_root,
             remove_root,
+            root_organized_count,
             list_files,
+            open_files,
+            reveal_file,
+            quick_look,
+            list_tags,
+            add_tag,
+            set_tag,
+            create_tag,
+            rename_tag,
+            delete_tag,
+            list_vfolders,
+            create_vfolder,
+            rename_vfolder,
+            delete_vfolder,
+            move_vfolder,
+            set_vfolder,
             rescan,
             scan_status,
             reveal_log,
