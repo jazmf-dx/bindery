@@ -33,6 +33,16 @@ tauri-plugin-log = "2"
 log = "0.4"
 # OS notifications for long tasks that end while the user is away (src/lib/osNotify.ts).
 tauri-plugin-notification = "2"
+# The app's own data (db.rs). The same crates and versions stockroom uses.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Walking a registered folder (scan.rs).
+walkdir = "2.5.0"
+# The hash used to find a moved file again (scan.rs, `hash_pending`).
+sha2 = "0.11.0"
+hex = "0.4.3"
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 # Copied from stockroom (desktop-platform playbook/new-tool.md).
 [profile.release]
@@ -43,7 +53,8 @@ strip = true
 
 # System proxy lookup (PAC) for the updater, see proxy.rs.
 [target."cfg(windows)".dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Networking_WinHttp"] }
+# Win32_Storage_FileSystem: a file's ID, to find it again after a move (scan.rs).
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Storage_FileSystem"] }
 
 [target."cfg(target_os = \"macos\")".dependencies]
 core-foundation-sys = "0.8"

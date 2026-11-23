@@ -8,8 +8,8 @@ AI と人が実装前に確認する **現在の前提**。機能要件、ロー
 | 項目 | 現在の前提 |
 |---|---|
 | ツールの種類 | ウィンドウアプリ |
-| UI の実装 | React + Tailwind 4（状態が要るようになったら zustand を足す） |
-| データの置き場 | `app_data_dir()` の SQLite 1 つ（まだ無い）。元のファイルは参照するだけで、ライブラリへ取り込まない（docs/CONCEPT.md） |
+| UI の実装 | React + zustand + Tailwind 4 |
+| データの置き場 | `app_data_dir()` の `bindery.db`（SQLite）1 つ。構造は docs/ARCHITECTURE.md。元のファイルは参照するだけで、ライブラリへ取り込まない（docs/CONCEPT.md） |
 | 外との接続 | なし（ブラウザ拡張・MCP・待ち受けポートは持たない） |
 | 配布の形 | 単独リポジトリ（tag `v*`、feed `https://github.com/jazmf-dx/bindery/releases/latest/download/latest.json`） |
 | 識別子 | `com.local.bindery`、`productName` は `Bindery`（一度配布したら変えない） |
@@ -24,6 +24,10 @@ AI と人が実装前に確認する **現在の前提**。機能要件、ロー
 - 機能を絞ったビルド（stockroom の `limits`）は持たない
 - CSP：`asset:` を外した（まだファイルを画面に出さない）。プレビューを作るときに、元のファイルをどう画面に渡すかと一緒に決める（人の判断が要る）
 - メニューバーはまだ作らない（macOS は Tauri の既定のメニュー）。コマンド表のキーだけ効く
+
+## 足した依存
+
+どれも stockroom が同じ版で使っているもの：`rusqlite`（bundled）・`walkdir`・`sha2`・`hex`・`tempfile`（テストだけ）、`zustand`・`@tanstack/react-virtual`。`windows` クレートに `Win32_Storage_FileSystem`（ファイル ID）を足した。
 
 ## 該当しない Standard
 

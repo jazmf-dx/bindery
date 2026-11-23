@@ -1,7 +1,10 @@
 //! Rust のコマンド。画面からは src/lib/api.ts のラッパ経由で呼ぶ。
 //! 足したら src/dev/mockBackend.ts も同じ PR で直す。
 
-use tauri::{AppHandle, Manager};
+use crate::db::{self, FileRow, Root, View};
+use crate::library::{self, Shared};
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager, State};
 
 pub type CmdResult<T> = Result<T, String>;
 
@@ -16,6 +19,52 @@ pub fn show_main_window(app: &AppHandle) {
         let _ = w.set_focus();
     }
 }
+
+// ------------------------------------------------------------ 登録フォルダ
+
+#[tauri::command]
+pub fn list_roots(lib: State<Shared>) -> CmdResult<Vec<Root>> {
+    lib.with(|c| db::list_roots(c))
+}
+
+/// フォルダを登録して、裏で読み込みを始める。元のフォルダには何も書かない。
+#[tauri::command]
+pub fn add_root(app: AppHandle, lib: State<Shared>, path: PathBuf) -> CmdResult<Root> {
+    let existing = lib.with(|c| db::list_roots(c))?;
+    library::check_new_root(&path, &existing)?;
+    let id = lib.with(|c| db::insert_root(c, &path.to_string_lossy()))?;
+    library::rescan(&app);
+    let roots = lib.with(|c| db::list_roots(c))?;
+    roots
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| "登録したフォルダが見つかりません".into())
+}
+
+/// 登録を外す。アプリのデータの中の行だけを消し、元のファイルには触らない。
+#[tauri::command]
+pub fn remove_root(lib: State<Shared>, id: i64) -> CmdResult<()> {
+    lib.with(|c| db::delete_root(c, id))
+}
+
+#[tauri::command]
+pub fn list_files(lib: State<Shared>, view: View, root_id: Option<i64>) -> CmdResult<Vec<FileRow>> {
+    lib.with(|c| db::list_files(c, view, root_id))
+}
+
+/// すべての登録フォルダを読み直す（照合）。
+#[tauri::command]
+pub fn rescan(app: AppHandle) {
+    library::rescan(&app);
+}
+
+/// 読み込みの途中か（画面を開いた直後に、`scan-state` を聞き逃した分を補う）。
+#[tauri::command]
+pub fn scan_status(lib: State<Shared>) -> bool {
+    lib.scanning()
+}
+
+// ------------------------------------------------------------------ 土台
 
 /// Shows the log file (tauri-plugin-log, see lib.rs) in Finder / Explorer.
 #[tauri::command]
