@@ -8,6 +8,7 @@ import { applyAppearance, nextAppearance, type Appearance } from "./appearance";
 import { api } from "./api";
 import { warn } from "./log";
 import { checkForUpdate } from "./update";
+import { useStore } from "../store";
 
 export type Command = {
   id: string;
@@ -18,7 +19,19 @@ export type Command = {
 
 let appearance: Appearance = "system";
 
+const st = () => useStore.getState();
+
 export const COMMANDS: Command[] = [
+  { id: "folder.add", label: "フォルダを登録…", keys: ["Mod+O"], run: () => void st().addRootDialog() },
+  {
+    id: "folder.remove",
+    label: "登録を外す",
+    run: () => {
+      const id = st().place.rootId;
+      if (id !== null) void st().removeRoot(id);
+    },
+  },
+  { id: "folder.rescan", label: "読み直す", keys: ["Mod+R"], run: () => void api.rescan() },
   {
     id: "view.appearance",
     label: "外観を切り替える",
@@ -58,4 +71,11 @@ export function listenCommandKeys(): () => void {
   };
   window.addEventListener("keydown", onKey);
   return () => window.removeEventListener("keydown", onKey);
+}
+
+/** ボタンなどから表の操作を実行する（操作の中身を画面の部品に書かない）。 */
+export function runCommand(id: string) {
+  const cmd = COMMANDS.find((c) => c.id === id);
+  if (cmd) cmd.run();
+  else warn(`unknown command: ${id}`);
 }

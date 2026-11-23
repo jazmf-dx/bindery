@@ -1,9 +1,12 @@
 //! Bindery のアプリの土台。stockroom の lib.rs から、どのアプリでも使う部分
 //! （プラグインの配線・ログ・ウィンドウ）だけを写した（desktop-platform
-//! playbook/new-tool.md）。整理の仕組み（登録フォルダ・照合・タグ）はまだ無い。
+//! playbook/new-tool.md）。整理の仕組みは db.rs（データ）・scan.rs（照合）・library.rs（裏の仕事）。
 
 pub mod commands;
+pub mod db;
+pub mod library;
 pub mod proxy;
+pub mod scan;
 
 use commands::*;
 
@@ -94,8 +97,13 @@ pub fn run() {
                 )
                 .build(),
         )
+        .manage(library::Shared::default())
         .setup(|app| {
             log_panics();
+            // データベースを開けなくても、ウィンドウは出す（ログを見られるように）。
+            if let Err(e) = library::start(app.handle()) {
+                log::error!("library: {e}");
+            }
             main_window(app.handle())?;
             log::info!(
                 "{} {} ({} {})",
@@ -107,6 +115,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_roots,
+            add_root,
+            remove_root,
+            list_files,
+            rescan,
+            scan_status,
             reveal_log,
             system_proxy,
             open_release_page
