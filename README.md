@@ -33,7 +33,20 @@ PDF・オフィス文書・テキストを、**元の場所に置いたまま** 
 
 ## インストール
 
-まだ配布していない。配布を始めたら、初回だけ出る警告の手順をここに書く（desktop-platform Distribution §3）。
+[Releases](https://github.com/jazmf-dx/bindery/releases) から入れる。macOS（Apple Silicon）は `.dmg`、Windows は `-setup.exe`。
+
+アプリは Apple / Microsoft の署名をしていないので、**最初の 1 回だけ** 警告が出る。
+
+- **macOS**：`.dmg` を開いて「アプリケーション」へコピー → 起動すると「開発元を検証できない」と出るので「完了」→ **システム設定 › プライバシーとセキュリティ** の下にある「このまま開く」。ターミナルで `xattr -dr com.apple.quarantine "/Applications/Bindery.app"` でもよい
+- **Windows**：`-setup.exe` を実行 → SmartScreen が出たら「詳細情報」→「実行」
+
+## アップデート
+
+2 回目からはアプリの中で更新する。起動して数秒後に新しい版を確かめ、あればダイアログで知らせる（［更新して再起動］）。
+手動で確かめるときは、macOS は **Bindery › アップデートを確認…**、Windows は **ヘルプ › アップデートを確認…**。
+アプリが自分で入れ替えるので、この経路では警告は出ない。
+
+困ったときは **ヘルプ › ログを表示** でログのファイルを開ける。
 
 ## 開発
 

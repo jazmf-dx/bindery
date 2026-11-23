@@ -30,3 +30,9 @@
 一覧の行のドラッグは、ブラウザのドラッグ＆ドロップを使わず、マウスの動きで作っている（`src/components/FileList.tsx` の `startDrag`、`DragLayer.tsx`）。
 Tauri はウィンドウへのファイルのドロップを受ける設定のため、Windows ではページの中のドラッグ＆ドロップが届かない。
 落とし先はサイドバーの行の `data-drop="tag:ID"` / `"folder:ID"`。
+
+## メニューとキー
+
+操作は `src/lib/commands.ts` の表に 1 回だけ書き、メニューバー（`src/lib/menuBar.ts`）・キー・画面のボタンはそこから使う。
+⌘ / Ctrl の組み合わせはメニューの accelerator が受け、ページは受けない（2 回動かないように）。
+スペース・Enter・矢印・Esc は入力欄の文字にも使うので、ページが受ける。入力欄にいるときは、表で `inFields` にしたものだけが効く。

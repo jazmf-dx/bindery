@@ -4,12 +4,14 @@ import App from "./App";
 import "./index.css";
 import { setUpAppearance } from "./lib/appearance";
 import { logUncaughtErrors } from "./lib/log";
+import { setUpMenuBar } from "./lib/menuBar";
 import { setUpTitleBar } from "./lib/titleBar";
 
 async function main() {
   logUncaughtErrors();
   setUpAppearance();
   setUpTitleBar();
+  void setUpMenuBar();
   // Opened in a plain browser during development: use the in-memory mock backend.
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
     (await import("./dev/mockBackend")).installMockBackend();
