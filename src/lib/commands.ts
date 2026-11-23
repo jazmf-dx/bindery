@@ -31,7 +31,18 @@ export const COMMANDS: Command[] = [
   { id: "file.copyPath", label: "パスをコピー", keys: ["Mod+Alt+C"], run: () => st().copyPaths() },
 
   // 選ぶ
-  { id: "select.all", label: "すべて選ぶ", keys: ["Mod+A"], run: () => st().selectAll() },
+  {
+    id: "select.all",
+    label: "すべて選ぶ",
+    keys: ["Mod+A"],
+    inFields: true,
+    // 文字の入力欄にいるときは、その文字を全部選ぶ（メニューの accelerator が先に受けるため）
+    run: () => {
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
+      else st().selectAll();
+    },
+  },
   { id: "select.none", label: "選ぶのをやめる", keys: ["Escape"], run: () => st().clearSelection() },
   { id: "select.down", label: "次", keys: ["ArrowDown"], run: () => st().step(1, false) },
   { id: "select.up", label: "前", keys: ["ArrowUp"], run: () => st().step(-1, false) },
@@ -78,7 +89,16 @@ export const COMMANDS: Command[] = [
   { id: "help.log", label: "ログを表示", run: () => api.revealLog().catch((e) => warn("reveal log", e)) },
 ];
 
-const isMac = navigator.userAgent.includes("Mac");
+export const isMac = navigator.userAgent.includes("Mac");
+
+/**
+ * メニューバーがある（アプリの中）とき、⌘ / Ctrl の組み合わせはメニューの accelerator が受ける
+ * （src/lib/menuBar.ts）。ページでも受けると 2 回動くので、ページでは受けない。
+ */
+let menuTakesMod = false;
+export function setMenuTakesMod(on: boolean) {
+  menuTakesMod = on;
+}
 
 /** "Mod+Shift+L" と押されたキーが合うか。 */
 function matches(keys: string, e: KeyboardEvent): boolean {
@@ -102,13 +122,21 @@ export function listenCommandKeys(): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (composing(e)) return;
     const field = inField(e);
-    const cmd = COMMANDS.find((c) => (!field || c.inFields) && c.keys?.some((k) => matches(k, e)));
+    const cmd = COMMANDS.find(
+      (c) => (!field || c.inFields) && c.keys?.some((k) => !(menuTakesMod && k.includes("Mod+")) && matches(k, e)),
+    );
     if (!cmd) return;
     e.preventDefault();
     cmd.run();
   };
   window.addEventListener("keydown", onKey);
   return () => window.removeEventListener("keydown", onKey);
+}
+
+export function command(id: string): Command {
+  const c = COMMANDS.find((x) => x.id === id);
+  if (!c) throw new Error(`unknown command: ${id}`);
+  return c;
 }
 
 /** ボタンなどから表の操作を実行する（操作の中身を画面の部品に書かない）。 */
