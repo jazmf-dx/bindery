@@ -16,6 +16,13 @@ import { warn } from "./log";
 /** The name every update dialog starts from, so it's clear which app is asking. */
 export const APP_NAME = "Bindery";
 
+/**
+ * アプリ内の更新を使うか。0.1.0 は署名鍵がまだ無いので、更新ファイルを作らずに出す
+ * （tauri.conf.json の `createUpdaterArtifacts: false`、decisions/project-context.md「逸脱」）。
+ * 鍵を入れたら true に戻し、`createUpdaterArtifacts` も戻す。
+ */
+export const UPDATES = false;
+
 const isMac = navigator.userAgent.includes("Mac");
 
 /**
@@ -39,6 +46,15 @@ let busy = false;
  */
 export async function checkForUpdate(manual: boolean) {
   if (busy || !isTauri()) return;
+  if (!UPDATES) {
+    if (manual) {
+      await message("この版はアプリの中での更新に対応していません。新しい版は GitHub の Releases から入れてください。", {
+        title: APP_NAME,
+        kind: "info",
+      });
+    }
+    return;
+  }
   busy = true;
   try {
     const update = await check({ timeout: 15_000, proxy: await systemProxy() });
@@ -90,7 +106,7 @@ async function install(update: Update) {
 
 /** Check a few seconds after launch in release builds. Returns a cleanup. */
 export function scheduleUpdateCheck(): () => void {
-  if (import.meta.env.DEV || !isTauri()) return () => {};
+  if (import.meta.env.DEV || !isTauri() || !UPDATES) return () => {};
   const t = setTimeout(() => checkForUpdate(false), 4000);
   return () => clearTimeout(t);
 }

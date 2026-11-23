@@ -11,6 +11,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { command, isMac, keyLabel, runCommand, setMenuTakesMod } from "./commands";
 import { warn } from "./log";
+import { UPDATES } from "./update";
 
 const APP = "Bindery";
 
@@ -37,7 +38,7 @@ async function build(): Promise<Menu> {
       ? [
           submenu(APP, [
             about(),
-            item("help.update"),
+            ...(UPDATES ? [item("help.update")] : []),
             sep(),
             PredefinedMenuItem.new({ item: "Services", text: "サービス" }),
             sep(),
@@ -83,7 +84,7 @@ async function build(): Promise<Menu> {
           ]),
         ]
       : []),
-    submenu("ヘルプ", [item("help.log"), ...(isMac ? [] : [item("help.update"), sep(), about()])]),
+    submenu("ヘルプ", [item("help.log"), ...(isMac ? [] : [...(UPDATES ? [item("help.update")] : []), sep(), about()])]),
   ];
   return Menu.new({ items: await Promise.all(menus) });
 }
