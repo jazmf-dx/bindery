@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Details } from "./components/Details";
 import { DragLayer } from "./components/DragLayer";
+import { DropZone } from "./components/DropZone";
 import { FileList, Header } from "./components/FileList";
 import { Sidebar } from "./components/Sidebar";
 import { api, FILES_CHANGED, SCAN_STATE } from "./lib/api";
@@ -40,6 +41,7 @@ export default function App() {
       </main>
       <Details />
       <DragLayer />
+      <DropZone />
     </div>
   );
 }

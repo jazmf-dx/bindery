@@ -25,8 +25,10 @@ function placeTitle(): string {
       return "未整理";
     case "missing":
       return "行方不明";
-    case "root":
-      return roots.find((r) => r.id === place.id)?.name ?? "";
+    case "root": {
+      const name = roots.find((r) => r.id === place.id)?.name ?? "";
+      return place.dir ? `${name} › ${place.dir.split("/").join(" › ")}` : name;
+    }
     case "tag":
       return `タグ：${tags.find((t) => t.id === place.id)?.name ?? ""}`;
     case "folder":
@@ -202,7 +204,7 @@ function EmptyList() {
         all: "ファイルはありません",
         unsorted: "未整理のファイルはありません",
         missing: "行方不明のファイルはありません",
-        root: "ファイルはありません",
+        root: "このフォルダに直接入っているファイルはありません。中のフォルダは、サイドバーの ▸ で開けます",
         tag: "このタグのファイルはありません。一覧から行をこのタグへドラッグすると付きます",
         folder: "この仮想フォルダは空です。一覧から行をここへドラッグすると入ります",
       }[place.kind];

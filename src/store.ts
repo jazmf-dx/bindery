@@ -8,7 +8,7 @@ import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from
 import { warn } from "./lib/log";
 
 export const samePlace = (a: Place, b: Place) =>
-  a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null);
+  a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null) && ("dir" in a ? a.dir : null) === ("dir" in b ? b.dir : null);
 
 /** 一覧のドラッグ（サイドバーのタグ・仮想フォルダへ落とす）。 */
 export type Drag = { ids: number[]; x: number; y: number; label: string };
@@ -46,6 +46,8 @@ type State = {
   setEditing: (editing: Editing | null) => void;
 
   addRootDialog: () => Promise<void>;
+  /** フォルダを登録する（ダイアログで選んだ・ウィンドウへ落とした）。サブフォルダがあれば、読むか聞く。 */
+  addRoots: (paths: string[]) => Promise<void>;
   removeRoot: (id: number) => Promise<void>;
 
   openSelected: () => void;
@@ -113,6 +115,12 @@ export const useStore = create<State>((set, get) => ({
             (place.kind === "tag" && !tags.some((t) => t.id === place.id)) ||
             (place.kind === "folder" && !vfolders.some((v) => v.id === place.id));
           const missingCount = roots.reduce((n, r) => n + r.missing, 0);
+          // 選んでいた中のフォルダが無くなった（ファイルが無くなった・動いた）ら、その登録フォルダへ
+          if (place.kind === "root" && place.dir && !gone && !roots.find((r) => r.id === place.id)?.dirs.some((d) => d.path === place.dir)) {
+            set({ roots, tags, vfolders, missingCount, place: { kind: "root", id: place.id, dir: "" } });
+            again = true;
+            continue;
+          }
           if (gone) {
             set({ roots, tags, vfolders, missingCount, place: { kind: "all" } });
             again = true;
@@ -172,13 +180,52 @@ export const useStore = create<State>((set, get) => ({
 
   addRootDialog: async () => {
     const path = await open({ directory: true, title: "登録するフォルダを選ぶ" });
-    if (typeof path !== "string") return;
+    if (typeof path === "string") await get().addRoots([path]);
+  },
+
+  addRoots: async (paths) => {
+    let infos;
     try {
-      const root = await api.addRoot(path);
-      get().go({ kind: "root", id: root.id });
+      infos = await api.inspectPaths(paths);
     } catch (e) {
       await message(String(e), { title: "フォルダを登録できませんでした", kind: "warning" });
+      return;
     }
+    const dirs = infos.filter((p) => p.isDir);
+    const others = infos.length - dirs.length;
+    // ファイルを 1 つずつ足すのはまだできない（docs/CONCEPT.md「まだやっていないこと」）
+    if (dirs.length === 0) {
+      await message("登録できるのはフォルダだけです。ファイルを 1 つずつ足すことは、まだできません。", { title: "ファイルは登録できません", kind: "info" });
+      return;
+    }
+    // サブフォルダを読むかは、サブフォルダのあるフォルダがあるときだけ聞く。まとめて落としたときは 1 回だけ聞く
+    let recursive = true;
+    const nested = dirs.filter((d) => d.hasSubdirs);
+    if (nested.length > 0) {
+      const what = nested.length === 1 ? `「${baseName(nested[0].path)}」` : `${nested.length} 個のフォルダ`;
+      const yes = "サブフォルダも含める";
+      const no = "このフォルダだけ";
+      const answer = await message(`${what}にはサブフォルダがあります。サブフォルダの中のファイルも読み込みますか？\nあとから変えるには、登録を外して登録し直します。`, {
+        title: "サブフォルダも読み込みますか？",
+        kind: "info",
+        buttons: { yes, no, cancel: "やめる" },
+      });
+      if (answer !== yes && answer !== no) return;
+      recursive = answer === yes;
+    }
+    const failed: string[] = [];
+    let last: number | null = null;
+    for (const d of dirs) {
+      try {
+        last = (await api.addRoot(d.path, recursive)).id;
+      } catch (e) {
+        failed.push(dirs.length > 1 ? `${baseName(d.path)}：${String(e)}` : String(e));
+      }
+    }
+    if (others > 0) failed.push(`ファイル ${others} 件は登録していません（登録できるのはフォルダだけです）。`);
+    if (last !== null) get().go({ kind: "root", id: last, dir: "" });
+    else await get().load();
+    if (failed.length) await message(failed.join("\n"), { title: last === null ? "フォルダを登録できませんでした" : "一部を登録できませんでした", kind: "warning" });
   },
 
   removeRoot: async (id) => {
@@ -259,6 +306,9 @@ export const useStore = create<State>((set, get) => ({
   },
   setFolder: (ids, folderId, on) => attempt("仮想フォルダを変えられませんでした", () => api.setVFolder(ids, folderId, on)),
 }));
+
+/** パスの最後の名前。 */
+export const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
 
 /** 仮想フォルダの道筋（「案件 › A社」）。 */
 export function folderPath(vfolders: VFolder[], id: number): string {

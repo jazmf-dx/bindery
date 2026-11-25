@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { FileRow, Place, Root, Tag, VFolder } from "../lib/api";
 
-type MockRoot = { id: number; path: string };
+type MockRoot = { id: number; path: string; recursive: boolean };
 
 const roots: MockRoot[] = [];
 const files: FileRow[] = [];
@@ -22,20 +22,39 @@ const SAMPLE = [
   "売上/得意先一覧.csv",
   "提案/新サービス案.pptx",
   "メモ/やること.md",
+  "メモ/2025/去年のメモ.md",
   "README.txt",
 ];
 
 const nameOf = (p: string) => p.split("/").pop() ?? p;
 const extOf = (p: string) => (p.includes(".") ? p.split(".").pop()!.toLowerCase() : "");
+/** 登録フォルダから見た、ファイルのあるフォルダ（直下は空）。 */
+const dirOf = (f: FileRow) => {
+  const root = roots.find((r) => r.id === f.rootId);
+  const rel = root ? f.path.slice(root.path.length + 1) : f.path;
+  return rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+};
 
 function toRoot(r: MockRoot): Root {
   const mine = files.filter((f) => f.rootId === r.id);
+  const counts = new Map<string, number>();
+  for (const f of mine) {
+    const d = dirOf(f);
+    if (f.missing || !d) continue;
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+    for (let at = d; at.includes("/"); ) {
+      at = at.slice(0, at.lastIndexOf("/"));
+      if (!counts.has(at)) counts.set(at, 0);
+    }
+  }
   return {
     id: r.id,
     path: r.path,
     name: nameOf(r.path),
     count: mine.filter((f) => !f.missing).length,
     missing: mine.filter((f) => f.missing).length,
+    recursive: r.recursive,
+    dirs: [...counts].map(([path, count]) => ({ path, count })).sort((x, y) => x.path.localeCompare(y.path, "ja")),
   };
 }
 
@@ -45,6 +64,7 @@ function scanLater(root: MockRoot) {
   void emit("scan-state", true);
   setTimeout(() => {
     for (const rel of SAMPLE) {
+      if (!root.recursive && rel.includes("/")) continue;
       const path = `${root.path}/${rel}`;
       if (files.some((f) => f.path === path)) continue;
       files.push({
@@ -89,11 +109,14 @@ export function installMockBackend() {
         case "add_root": {
           const path = String(a.path);
           if (roots.some((r) => r.path === path)) throw `「${nameOf(path)}」はもう登録してあります`;
-          const root = { id: nextId++, path };
+          const root = { id: nextId++, path, recursive: Boolean(a.recursive) };
           roots.push(root);
           scanLater(root);
           return toRoot(root);
         }
+        case "inspect_paths":
+          // 拡張子の無いものをフォルダとみなす
+          return (a.paths as string[]).map((path) => ({ path, isDir: !nameOf(path).includes("."), hasSubdirs: !nameOf(path).includes(".") }));
         case "remove_root": {
           const id = Number(a.id);
           roots.splice(roots.findIndex((r) => r.id === id), 1);
@@ -113,7 +136,7 @@ export function installMockBackend() {
               case "missing":
                 return f.missing;
               case "root":
-                return !f.missing && f.rootId === p.id;
+                return !f.missing && f.rootId === p.id && dirOf(f) === p.dir;
               case "tag":
                 return f.tags.includes(p.id);
               case "folder":
@@ -195,8 +218,10 @@ export function installMockBackend() {
           return `/Users/demo/共有/案件${roots.length + 1}`;
         case "plugin:dialog|message": {
           // 確かめるダイアログ（ask）は［OK］［キャンセル］の名前付きで届く
-          const b = a.buttons as { OkCancelCustom?: [string, string] } | undefined;
+          const b = a.buttons as { OkCancelCustom?: [string, string]; YesNoCancelCustom?: [string, string, string] } | undefined;
           if (b?.OkCancelCustom) return window.confirm(String(a.message)) ? b.OkCancelCustom[0] : b.OkCancelCustom[1];
+          // 3 つのボタン：OK で 1 つめ、キャンセルで 2 つめ（やめるは選べない）
+          if (b?.YesNoCancelCustom) return window.confirm(`${String(a.message)}\n\nOK：${b.YesNoCancelCustom[0]}／キャンセル：${b.YesNoCancelCustom[1]}`) ? b.YesNoCancelCustom[0] : b.YesNoCancelCustom[1];
           window.alert(String(a.message));
           return null;
         }

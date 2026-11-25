@@ -27,18 +27,48 @@ pub fn list_roots(lib: State<Shared>) -> CmdResult<Vec<Root>> {
     lib.with(|c| db::list_roots(c))
 }
 
-/// フォルダを登録して、裏で読み込みを始める。元のフォルダには何も書かない。
+/// フォルダを登録して、裏で読み込みを始める。`recursive` が false ならサブフォルダは読まない。
+/// 元のフォルダには何も書かない。
 #[tauri::command]
-pub fn add_root(app: AppHandle, lib: State<Shared>, path: PathBuf) -> CmdResult<Root> {
+pub fn add_root(
+    app: AppHandle,
+    lib: State<Shared>,
+    path: PathBuf,
+    recursive: bool,
+) -> CmdResult<Root> {
     let existing = lib.with(|c| db::list_roots(c))?;
-    library::check_new_root(&path, &existing)?;
-    let id = lib.with(|c| db::insert_root(c, &path.to_string_lossy()))?;
+    library::check_new_root(&path, recursive, &existing)?;
+    let id = lib.with(|c| db::insert_root(c, &path.to_string_lossy(), recursive))?;
     library::rescan(&app);
     let roots = lib.with(|c| db::list_roots(c))?;
     roots
         .into_iter()
         .find(|r| r.id == id)
         .ok_or_else(|| "登録したフォルダが見つかりません".into())
+}
+
+/// 落とされた・選ばれたパスがフォルダか、中にサブフォルダがあるか（登録の前に、何を聞くか決めるため）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathInfo {
+    path: String,
+    is_dir: bool,
+    has_subdirs: bool,
+}
+
+#[tauri::command]
+pub fn inspect_paths(paths: Vec<PathBuf>) -> Vec<PathInfo> {
+    paths
+        .into_iter()
+        .map(|p| {
+            let is_dir = p.is_dir();
+            PathInfo {
+                has_subdirs: is_dir && crate::scan::has_subdirs(&p),
+                is_dir,
+                path: p.to_string_lossy().into_owned(),
+            }
+        })
+        .collect()
 }
 
 /// 登録を外す。アプリのデータの中の行だけを消し、元のファイルには触らない。
