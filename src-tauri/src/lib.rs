@@ -118,6 +118,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_roots,
             add_root,
+            inspect_paths,
             remove_root,
             root_organized_count,
             list_files,

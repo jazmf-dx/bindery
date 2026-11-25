@@ -14,7 +14,7 @@
 | 画面 | `src/` | React。部品は `src/components/`（サイドバー・一覧・詳細パネル・ドラッグ）。状態は `src/store.ts`（データベースの写し。`files-changed` と自分の変更のあとに読み直す）。操作は `src/lib/commands.ts` の表から |
 | 呼び出し | `src/lib/api.ts` | Rust のコマンドのラッパ。ブラウザでは `src/dev/mockBackend.ts` が代わりに答える |
 | コマンド | `src-tauri/src/commands.rs` | 画面から呼ばれる入口 |
-| データ | `src-tauri/src/db.rs` | `app_data_dir()/bindery.db`（SQLite）。表は `roots`（登録フォルダ）・`files`（見つけたファイル）・`tags` と `file_tags`・`vfolders`（`parent_id` で入れ子）と `vfolder_files`。版は `PRAGMA user_version` と `SCHEMA` の手順 |
+| データ | `src-tauri/src/db.rs` | `app_data_dir()/bindery.db`（SQLite）。表は `roots`（登録フォルダ。`recursive` でサブフォルダまで読むか）・`files`（見つけたファイル。`dir` は登録フォルダから見た中のフォルダ）・`tags` と `file_tags`・`vfolders`（`parent_id` で入れ子）と `vfolder_files`。版は `PRAGMA user_version` と `SCHEMA` の手順 |
 | 照合 | `src-tauri/src/scan.rs` | フォルダを読む（`walk`）・記録を合わせる（`apply`）・ハッシュでつなぎ直す（`record_hash`） |
 | 裏の仕事 | `src-tauri/src/library.rs` | 読み込みとハッシュの計算を裏のスレッドで。変わったら `files-changed`、読み込みの始まりと終わりに `scan-state` を画面へ送る |
 | Quick Look | `src-tauri/src/quicklook.rs` | macOS は `qlmanage -p`、Windows は既定のアプリ |
@@ -30,6 +30,9 @@
 一覧の行のドラッグは、ブラウザのドラッグ＆ドロップを使わず、マウスの動きで作っている（`src/components/FileList.tsx` の `startDrag`、`DragLayer.tsx`）。
 Tauri はウィンドウへのファイルのドロップを受ける設定のため、Windows ではページの中のドラッグ＆ドロップが届かない。
 落とし先はサイドバーの行の `data-drop="tag:ID"` / `"folder:ID"`。
+
+Finder / エクスプローラーからウィンドウへ落としたものは、Tauri の `onDragDropEvent` で受ける（`src/components/DropZone.tsx`）。
+フォルダか・サブフォルダがあるかを `inspect_paths` で確かめてから、`store.ts` の `addRoots` で登録する（［フォルダを登録…］も同じ道を通る）。
 
 ## メニューとキー
 

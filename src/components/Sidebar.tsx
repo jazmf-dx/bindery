@@ -1,10 +1,11 @@
 /**
  * サイドバー。上から 未整理・行方不明 → 仮想フォルダ → タグ → 登録フォルダ（docs/CONCEPT.md「サイドバー」）。
  * 仮想フォルダとタグの行は、一覧からドラッグしたファイルの落とし先になる（`data-drop`、DragLayer.tsx）。
+ * 登録フォルダの下には、中のフォルダを元の階層のまま木で出す（開け閉めできる。はじめは閉じている）。
  */
-import type { ReactNode } from "react";
-import { Folder, FolderOpen, FolderPlus, HelpCircle, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
-import type { Place, Root, Tag, VFolder } from "../lib/api";
+import { useState, type ReactNode } from "react";
+import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
+import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
 import { runCommand } from "../lib/commands";
 import { dragRegion } from "../lib/titleBar";
 import { samePlace, useStore } from "../store";
@@ -94,12 +95,14 @@ type RowProps = {
   dim?: boolean;
   depth?: number;
   drop?: string;
+  /** アイコンの前に置く開け閉めの印（登録フォルダの木）。 */
+  twisty?: ReactNode;
   onClick?: () => void;
   onDoubleClick?: () => void;
   trailing?: ReactNode;
 };
 
-function Row({ icon, label, count, title, active, dim, depth = 0, drop, onClick, onDoubleClick, trailing }: RowProps) {
+function Row({ icon, label, count, title, active, dim, depth = 0, drop, twisty, onClick, onDoubleClick, trailing }: RowProps) {
   return (
     <div
       role="button"
@@ -110,6 +113,7 @@ function Row({ icon, label, count, title, active, dim, depth = 0, drop, onClick,
       style={{ paddingLeft: 8 + depth * 14 }}
       className={`group flex cursor-default items-center gap-2 rounded-md py-1 pr-1.5 data-[over]:!bg-tonal data-[over]:!text-on-tonal ${active ? "bg-chosen" : "ghost"} ${dim ? "text-dim" : ""}`}
     >
+      {twisty}
       {icon}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {count !== undefined && <span className="text-[11px] text-dim tabular-nums">{count}</span>}
@@ -241,18 +245,64 @@ function TagRow({ tag }: { tag: Tag }) {
 
 function RootRow({ root }: { root: Root }) {
   const removeRoot = useStore((s) => s.removeRoot);
+  const [open, setOpen] = useState(false);
+  const top = root.dirs.filter((d) => !d.path.includes("/"));
   return (
-    <PlaceRow
-      place={{ kind: "root", id: root.id }}
-      icon={<Folder size={15} />}
-      label={root.name}
-      title={root.path}
-      count={root.count}
-      trailing={
-        <HoverButton label="登録を外す（元のファイルには触りません）" onClick={() => void removeRoot(root.id)}>
-          <X size={13} />
-        </HoverButton>
-      }
-    />
+    <>
+      <PlaceRow
+        place={{ kind: "root", id: root.id, dir: "" }}
+        icon={<Folder size={15} />}
+        twisty={<Twisty has={top.length > 0} open={open} onToggle={() => setOpen(!open)} />}
+        label={root.name}
+        title={root.recursive ? root.path : `${root.path}（サブフォルダは読まない）`}
+        // 一覧と同じく、直接入っているファイルの数（中のフォルダの分は、その行に出る）
+        count={root.count - root.dirs.reduce((n, d) => n + d.count, 0) || undefined}
+        trailing={
+          <HoverButton label="登録を外す（元のファイルには触りません）" onClick={() => void removeRoot(root.id)}>
+            <X size={13} />
+          </HoverButton>
+        }
+      />
+      {open && top.map((d) => <DirRow key={d.path} root={root} dir={d} depth={1} />)}
+    </>
+  );
+}
+
+/** 登録フォルダの中のフォルダ。選ぶと、そのフォルダに直接入っているファイルが出る。 */
+function DirRow({ root, dir, depth }: { root: Root; dir: Dir; depth: number }) {
+  const [open, setOpen] = useState(false);
+  const children = root.dirs.filter((d) => d.path.startsWith(`${dir.path}/`) && !d.path.slice(dir.path.length + 1).includes("/"));
+  return (
+    <>
+      <PlaceRow
+        place={{ kind: "root", id: root.id, dir: dir.path }}
+        depth={depth}
+        icon={<Folder size={15} />}
+        twisty={<Twisty has={children.length > 0} open={open} onToggle={() => setOpen(!open)} />}
+        label={dir.path.slice(dir.path.lastIndexOf("/") + 1)}
+        title={dir.path}
+        count={dir.count || undefined}
+      />
+      {open && children.map((d) => <DirRow key={d.path} root={root} dir={d} depth={depth + 1} />)}
+    </>
+  );
+}
+
+/** 開け閉めの印。中のフォルダが無い行も、同じ幅を空けて名前の位置をそろえる。 */
+function Twisty({ has, open, onToggle }: { has: boolean; open: boolean; onToggle: () => void }) {
+  if (!has) return <span className="-mr-1.5 w-3.5 shrink-0" />;
+  return (
+    <button
+      aria-label={open ? "閉じる" : "開く"}
+      aria-expanded={open}
+      className="-mr-1.5 flex w-3.5 shrink-0 items-center justify-center text-dim"
+      onClick={(e) => {
+        // 行を選ぶ操作にしない
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
+    </button>
   );
 }

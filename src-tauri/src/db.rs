@@ -54,6 +54,12 @@ const SCHEMA: &[&str] = &[
         PRIMARY KEY (vfolder_id, file_id)
     );
     CREATE INDEX vfolder_files_file ON vfolder_files(file_id);",
+    // 3: 登録フォルダごとにサブフォルダまで読むか（前からのフォルダは読む）と、
+    //    ファイルがどの中のフォルダにあるか（登録フォルダからの相対、区切りは `/`、直下は空）。
+    //    `dir` は次の読み込み（起動時）で埋まる
+    "ALTER TABLE roots ADD COLUMN recursive INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE files ADD COLUMN dir TEXT;
+    CREATE INDEX files_dir ON files(root_id, dir);",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -100,11 +106,25 @@ pub struct Root {
     /// 中のファイルの数（行方不明を含まない）。
     pub count: i64,
     pub missing: i64,
+    /// サブフォルダの中まで読むか（登録するときに選ぶ）。
+    pub recursive: bool,
+    /// 中のフォルダ（サイドバーの木）。扱うファイルが下のどこかにあるものだけ。名前の順。
+    pub dirs: Vec<Dir>,
+}
+
+/// 登録フォルダの中のフォルダ。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Dir {
+    /// 登録フォルダからの相対（区切りは `/`）。
+    pub path: String,
+    /// 直下のファイルの数（行方不明を含まない）。
+    pub count: i64,
 }
 
 pub fn list_roots(conn: &Connection) -> rusqlite::Result<Vec<Root>> {
     let mut st = conn.prepare(
-        "SELECT r.id, r.path,
+        "SELECT r.id, r.path, r.recursive,
             (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 0),
             (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 1)
          FROM roots r",
@@ -116,13 +136,55 @@ pub fn list_roots(conn: &Connection) -> rusqlite::Result<Vec<Root>> {
                 id: r.get(0)?,
                 name: display_name(&path),
                 path,
-                count: r.get(2)?,
-                missing: r.get(3)?,
+                recursive: r.get::<_, i64>(2)? != 0,
+                count: r.get(3)?,
+                missing: r.get(4)?,
+                dirs: Vec::new(),
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    for root in &mut roots {
+        root.dirs = list_dirs(conn, root.id)?;
+    }
     roots.sort_by_key(|r| r.name.to_lowercase());
     Ok(roots)
+}
+
+/// 登録フォルダの中のフォルダ。ファイルが直接入っていないフォルダも、下にあれば出す（木をつなぐため）。
+fn list_dirs(conn: &Connection, root_id: i64) -> rusqlite::Result<Vec<Dir>> {
+    let mut st = conn.prepare(
+        "SELECT dir, COUNT(*) FROM files
+         WHERE root_id = ?1 AND missing = 0 AND dir IS NOT NULL AND dir != ''
+         GROUP BY dir",
+    )?;
+    let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    for row in st.query_map([root_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (dir, n) = row?;
+        // 上のフォルダも木に入れる
+        let mut at = dir.as_str();
+        while let Some(cut) = at.rfind('/') {
+            at = &at[..cut];
+            counts.entry(at.to_string()).or_insert(0);
+        }
+        *counts.entry(dir).or_insert(0) += n;
+    }
+    let mut dirs: Vec<Dir> = counts
+        .into_iter()
+        .map(|(path, count)| Dir { path, count })
+        .collect();
+    // 名前の順（大文字・小文字を区別しない）。親が子より先に来るよう、区切りごとに比べる
+    dirs.sort_by(|a, b| {
+        let key = |d: &Dir| {
+            d.path
+                .split('/')
+                .map(|s| s.to_lowercase())
+                .collect::<Vec<_>>()
+        };
+        key(a).cmp(&key(b))
+    });
+    Ok(dirs)
 }
 
 fn display_name(path: &str) -> String {
@@ -137,10 +199,10 @@ pub fn root_path(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>>
         .optional()
 }
 
-pub fn insert_root(conn: &Connection, path: &str) -> rusqlite::Result<i64> {
+pub fn insert_root(conn: &Connection, path: &str, recursive: bool) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO roots (path, added_at) VALUES (?1, ?2)",
-        params![path, now_ms()],
+        "INSERT INTO roots (path, recursive, added_at) VALUES (?1, ?2, ?3)",
+        params![path, recursive, now_ms()],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -170,7 +232,7 @@ pub struct FileRow {
 }
 
 /// 一覧に出すもの。サイドバーの項目に対応する。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Place {
     /// すべてのファイル（行方不明を除く）
@@ -178,9 +240,12 @@ pub enum Place {
     /// タグも仮想フォルダも無いもの
     Unsorted,
     Missing,
-    /// 登録フォルダの中
+    /// 登録フォルダ（`dir` が空）か、その中のフォルダに直接入っているもの
+    /// （下のフォルダの中身は含めない。Finder と同じ）
     Root {
         id: i64,
+        #[serde(default)]
+        dir: String,
     },
     Tag {
         id: i64,
@@ -197,24 +262,28 @@ fn ids(list: Option<String>) -> Vec<i64> {
 }
 
 pub fn list_files(conn: &Connection, place: Place) -> rusqlite::Result<Vec<FileRow>> {
-    let (filter, id) = match place {
-        Place::All => ("f.missing = 0", None),
+    use rusqlite::types::Value;
+    let (filter, args): (&str, Vec<Value>) = match place {
+        Place::All => ("f.missing = 0", vec![]),
         Place::Unsorted => (
             "f.missing = 0
              AND NOT EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.id)
              AND NOT EXISTS (SELECT 1 FROM vfolder_files v WHERE v.file_id = f.id)",
-            None,
+            vec![],
         ),
-        Place::Missing => ("f.missing = 1", None),
-        Place::Root { id } => ("f.missing = 0 AND f.root_id = ?1", Some(id)),
+        Place::Missing => ("f.missing = 1", vec![]),
+        Place::Root { id, dir } => (
+            "f.missing = 0 AND f.root_id = ?1 AND f.dir = ?2",
+            vec![id.into(), dir.into()],
+        ),
         // タグ・仮想フォルダでは、行方不明のものも出す（付けた情報は残っているので）
         Place::Tag { id } => (
             "EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.id AND t.tag_id = ?1)",
-            Some(id),
+            vec![id.into()],
         ),
         Place::Folder { id } => (
             "EXISTS (SELECT 1 FROM vfolder_files v WHERE v.file_id = f.id AND v.vfolder_id = ?1)",
-            Some(id),
+            vec![id.into()],
         ),
     };
     let sql = format!(
@@ -239,10 +308,9 @@ pub fn list_files(conn: &Connection, place: Place) -> rusqlite::Result<Vec<FileR
             folders: ids(r.get(9)?),
         })
     };
-    let rows = match id {
-        Some(id) => st.query_map([id], map)?.collect(),
-        None => st.query_map([], map)?.collect(),
-    };
+    let rows = st
+        .query_map(rusqlite::params_from_iter(args), map)?
+        .collect();
     rows
 }
 
@@ -495,7 +563,7 @@ mod tests {
     #[test]
     fn removing_a_root_removes_its_rows() {
         let conn = open_in_memory().unwrap();
-        let id = insert_root(&conn, "/tmp/a").unwrap();
+        let id = insert_root(&conn, "/tmp/a", true).unwrap();
         conn.execute(
             "INSERT INTO files (root_id, path, name, ext, size, mtime, added_at)
              VALUES (?1, '/tmp/a/x.pdf', 'x.pdf', 'pdf', 1, 1, 1)",
@@ -511,7 +579,7 @@ mod tests {
 
     fn with_files(n: i64) -> (Connection, Vec<i64>) {
         let conn = open_in_memory().unwrap();
-        let root = insert_root(&conn, "/r").unwrap();
+        let root = insert_root(&conn, "/r", true).unwrap();
         let mut ids = Vec::new();
         for i in 0..n {
             conn.execute(

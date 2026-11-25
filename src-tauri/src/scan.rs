@@ -46,14 +46,17 @@ pub struct Found {
     pub size: i64,
     pub mtime: i64,
     pub file_id: Option<String>,
+    /// 登録フォルダからの相対のフォルダ（区切りは `/`、直下は空）。
+    pub dir: String,
 }
 
-/// フォルダの下を全部読み、扱う種類のファイルを集める。データベースには触らない
-/// （共有ドライブで時間がかかっても、そのあいだ一覧を止めないため）。
-pub fn walk(root: &Path) -> Vec<Found> {
+/// フォルダの下を読み、扱う種類のファイルを集める。`recursive` が false なら直下だけ。
+/// データベースには触らない（共有ドライブで時間がかかっても、そのあいだ一覧を止めないため）。
+pub fn walk(root: &Path, recursive: bool) -> Vec<Found> {
     let mut found = Vec::new();
     let it = walkdir::WalkDir::new(root)
         .follow_links(false)
+        .max_depth(if recursive { usize::MAX } else { 1 })
         .into_iter()
         .filter_entry(|e| e.depth() == 0 || !skipped(&e.file_name().to_string_lossy()));
     for entry in it {
@@ -84,9 +87,35 @@ pub fn walk(root: &Path) -> Vec<Found> {
             size: meta.len() as i64,
             mtime: mtime_ms(&meta),
             file_id: file_id(path, &meta),
+            dir: rel_dir(root, path),
         });
     }
     found
+}
+
+/// 登録フォルダから見た、ファイルのあるフォルダ（`a/b`。直下は空）。
+fn rel_dir(root: &Path, file: &Path) -> String {
+    file.parent()
+        .and_then(|p| p.strip_prefix(root).ok())
+        .map(|p| {
+            p.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
+}
+
+/// 中にサブフォルダがあるか（読まない名前は数えない）。登録するときに、サブフォルダも読むかを聞くかどうか。
+pub fn has_subdirs(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|it| {
+            it.flatten().any(|e| {
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && !skipped(&e.file_name().to_string_lossy())
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
@@ -171,9 +200,9 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
                 let changed = k.size != f.size || k.mtime != f.mtime;
                 tx.execute(
                     "UPDATE files SET size = ?2, mtime = ?3, file_id = ?4, missing = 0,
-                        hash = CASE WHEN ?5 THEN NULL ELSE hash END
+                        hash = CASE WHEN ?5 THEN NULL ELSE hash END, dir = ?6
                      WHERE id = ?1",
-                    params![k.id, f.size, f.mtime, f.file_id, changed],
+                    params![k.id, f.size, f.mtime, f.file_id, changed, f.dir],
                 )?;
             }
             None => fresh.push(f),
@@ -212,16 +241,17 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
                 let changed = g.size != f.size || g.mtime != f.mtime;
                 tx.execute(
                     "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, size = ?6,
-                        mtime = ?7, missing = 0, hash = CASE WHEN ?8 THEN NULL ELSE hash END
+                        mtime = ?7, missing = 0, hash = CASE WHEN ?8 THEN NULL ELSE hash END,
+                        dir = ?9
                      WHERE id = ?1",
-                    params![g.id, root_id, f.path, f.name, f.ext, f.size, f.mtime, changed],
+                    params![g.id, root_id, f.path, f.name, f.ext, f.size, f.mtime, changed, f.dir],
                 )?;
             }
             None => {
                 tx.execute(
-                    "INSERT INTO files (root_id, path, name, ext, size, mtime, file_id, added_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![root_id, f.path, f.name, f.ext, f.size, f.mtime, f.file_id, now],
+                    "INSERT INTO files (root_id, path, name, ext, size, mtime, file_id, dir, added_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![root_id, f.path, f.name, f.ext, f.size, f.mtime, f.file_id, f.dir, now],
                 )?;
             }
         }
@@ -291,8 +321,17 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
         return Ok(false);
     };
     // 新しい行の中身を、行方不明だった行へ移す（行方不明の行の id を残す：あとで付くタグ・メモはそちらに付いている）。
-    let row: (i64, String, String, String, i64, Option<String>) = tx.query_row(
-        "SELECT root_id, path, name, ext, mtime, file_id FROM files WHERE id = ?1",
+    #[allow(clippy::type_complexity)]
+    let row: (
+        i64,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+    ) = tx.query_row(
+        "SELECT root_id, path, name, ext, mtime, file_id, dir FROM files WHERE id = ?1",
         [id],
         |r| {
             Ok((
@@ -302,6 +341,7 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
                 r.get(3)?,
                 r.get(4)?,
                 r.get(5)?,
+                r.get(6)?,
             ))
         },
     )?;
@@ -310,8 +350,8 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
     tx.execute("DELETE FROM files WHERE id = ?1", [id])?;
     tx.execute(
         "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, mtime = ?6,
-            file_id = ?7, missing = 0 WHERE id = ?1",
-        params![lost, row.0, row.1, row.2, row.3, row.4, row.5],
+            file_id = ?7, dir = ?8, missing = 0 WHERE id = ?1",
+        params![lost, row.0, row.1, row.2, row.3, row.4, row.5, row.6],
     )?;
     tx.commit()?;
     Ok(true)
@@ -325,12 +365,12 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Connection, i64) {
         let dir = tempfile::tempdir().unwrap();
         let conn = db::open_in_memory().unwrap();
-        let id = db::insert_root(&conn, &dir.path().to_string_lossy()).unwrap();
+        let id = db::insert_root(&conn, &dir.path().to_string_lossy(), true).unwrap();
         (dir, conn, id)
     }
 
     fn scan(conn: &mut Connection, root: i64, dir: &Path) {
-        apply(conn, root, walk(dir)).unwrap();
+        apply(conn, root, walk(dir, true)).unwrap();
     }
 
     fn names(conn: &Connection, view: db::Place) -> Vec<String> {
@@ -424,6 +464,51 @@ mod tests {
         assert_eq!(ids, [(1, "b.pdf"), (3, "c.pdf")]);
         // 新しい行に付けたタグは、つなぎ直した行へ移る
         assert_eq!(files[0].tags, [tag]);
+    }
+
+    #[test]
+    fn keeps_the_folders_and_lists_only_what_is_directly_inside() {
+        let (dir, mut conn, root) = setup();
+        let d = dir.path();
+        fs::create_dir_all(d.join("議事録/2026")).unwrap();
+        fs::create_dir_all(d.join("空")).unwrap();
+        fs::write(d.join("top.pdf"), "a").unwrap();
+        fs::write(d.join("議事録/2026/11月.docx"), "b").unwrap();
+        scan(&mut conn, root, d);
+        let at = |dir: &str| {
+            names(
+                &conn,
+                db::Place::Root {
+                    id: root,
+                    dir: dir.into(),
+                },
+            )
+        };
+        assert_eq!(at(""), ["top.pdf"]);
+        assert!(at("議事録").is_empty());
+        assert_eq!(at("議事録/2026"), ["11月.docx"]);
+        // 扱うファイルが無いフォルダ（空）は出さない。上のフォルダは木をつなぐために出す
+        let dirs = &db::list_roots(&conn).unwrap()[0].dirs;
+        let dirs: Vec<_> = dirs.iter().map(|x| (x.path.as_str(), x.count)).collect();
+        assert_eq!(dirs, [("議事録", 0), ("議事録/2026", 1)]);
+    }
+
+    #[test]
+    fn a_folder_registered_without_subfolders_reads_only_its_own_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        fs::create_dir_all(d.join("sub")).unwrap();
+        fs::write(d.join("a.pdf"), "a").unwrap();
+        fs::write(d.join("sub/b.pdf"), "b").unwrap();
+        assert!(has_subdirs(d));
+        assert!(!has_subdirs(&d.join("sub")));
+        let mut conn = db::open_in_memory().unwrap();
+        let root = db::insert_root(&conn, &d.to_string_lossy(), false).unwrap();
+        apply(&mut conn, root, walk(d, false)).unwrap();
+        assert_eq!(names(&conn, db::Place::All), ["a.pdf"]);
+        let r = &db::list_roots(&conn).unwrap()[0];
+        assert!(!r.recursive);
+        assert!(r.dirs.is_empty());
     }
 
     #[test]

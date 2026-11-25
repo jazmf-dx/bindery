@@ -13,7 +13,17 @@ export type Root = {
   /** 中のファイルの数（行方不明を含まない）。 */
   count: number;
   missing: number;
+  /** サブフォルダの中まで読むか（登録するときに選ぶ）。 */
+  recursive: boolean;
+  /** 中のフォルダ（サイドバーの木）。親が子より先、名前の順。 */
+  dirs: Dir[];
 };
+
+/** 登録フォルダの中のフォルダ。`path` は登録フォルダからの相対（区切りは `/`）。`count` は直下のファイルの数。 */
+export type Dir = { path: string; count: number };
+
+/** 落とされた・選ばれたパスの種類（src-tauri/src/commands.rs `PathInfo`）。 */
+export type PathInfo = { path: string; isDir: boolean; hasSubdirs: boolean };
 
 /** ファイルの記録（src-tauri/src/db.rs `FileRow`）。 */
 export type FileRow = {
@@ -38,7 +48,8 @@ export type Place =
   | { kind: "all" }
   | { kind: "unsorted" }
   | { kind: "missing" }
-  | { kind: "root"; id: number }
+  /** 登録フォルダ（`dir` が空）か、その中のフォルダ。直接入っているものだけ。 */
+  | { kind: "root"; id: number; dir: string }
   | { kind: "tag"; id: number }
   | { kind: "folder"; id: number };
 
@@ -53,8 +64,10 @@ export const SCAN_STATE = "scan-state";
 
 export const api = {
   listRoots: () => invoke<Root[]>("list_roots"),
-  /** フォルダを登録して、裏で読み込みを始める。登録できないフォルダはエラーの文で断る。 */
-  addRoot: (path: string) => invoke<Root>("add_root", { path }),
+  /** フォルダを登録して、裏で読み込みを始める。`recursive` が false ならサブフォルダは読まない。登録できないフォルダはエラーの文で断る。 */
+  addRoot: (path: string, recursive: boolean) => invoke<Root>("add_root", { path, recursive }),
+  /** フォルダか・中にサブフォルダがあるか。 */
+  inspectPaths: (paths: string[]) => invoke<PathInfo[]>("inspect_paths", { paths }),
   /** 登録を外す。アプリのデータの行だけを消し、元のファイルには触らない。 */
   removeRoot: (id: number) => invoke<void>("remove_root", { id }),
   /** タグか仮想フォルダが付いたファイルの数（登録を外す前の確認用）。 */

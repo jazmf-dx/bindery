@@ -91,7 +91,7 @@ fn scan_all(app: &AppHandle, lib: &Library) {
             continue;
         }
         let started = std::time::Instant::now();
-        let found = scan::walk(&path);
+        let found = scan::walk(&path, root.recursive);
         let n = found.len();
         if let Err(e) = lib.with(|c| scan::apply(c, root.id, found)) {
             log::error!("scan {}: {e}", root.path);
@@ -147,9 +147,10 @@ fn hash_in_background(app: &AppHandle) {
     });
 }
 
-/// 登録できるフォルダか。すでに登録したフォルダの中や、それを含むフォルダは断る
-/// （同じファイルが 2 つのフォルダに入ってしまうため）。
-pub fn check_new_root(path: &Path, existing: &[db::Root]) -> Result<(), String> {
+/// 登録できるフォルダか。同じファイルが 2 つの登録フォルダに入ってしまうものは断る：
+/// サブフォルダまで読む登録フォルダの中と、サブフォルダまで読むときに、登録したフォルダを含むもの。
+/// 直下だけ読むフォルダとは重ならないので、その中のフォルダや、それを直下だけで含むフォルダは登録できる。
+pub fn check_new_root(path: &Path, recursive: bool, existing: &[db::Root]) -> Result<(), String> {
     if !path.is_dir() {
         return Err(format!("フォルダが見つかりません：{}", path.display()));
     }
@@ -158,10 +159,10 @@ pub fn check_new_root(path: &Path, existing: &[db::Root]) -> Result<(), String> 
         if path == other {
             return Err(format!("「{}」はもう登録してあります", r.name));
         }
-        if path.starts_with(other) {
+        if r.recursive && path.starts_with(other) {
             return Err(format!("登録したフォルダ「{}」の中にあります", r.name));
         }
-        if other.starts_with(path) {
+        if recursive && other.starts_with(path) {
             return Err(format!(
                 "登録したフォルダ「{}」を含んでいます。先にそちらを外してください",
                 r.name
@@ -186,6 +187,8 @@ mod tests {
                 .into(),
             count: 0,
             missing: 0,
+            recursive: true,
+            dirs: Vec::new(),
         }
     }
 
@@ -196,11 +199,27 @@ mod tests {
         let b = a.join("b");
         std::fs::create_dir_all(&b).unwrap();
         let have_a = [root(&a.to_string_lossy())];
-        assert!(check_new_root(&a, &have_a).is_err());
-        assert!(check_new_root(&b, &have_a).is_err());
+        assert!(check_new_root(&a, true, &have_a).is_err());
+        assert!(check_new_root(&b, true, &have_a).is_err());
         let have_b = [root(&b.to_string_lossy())];
-        assert!(check_new_root(&a, &have_b).is_err());
-        assert!(check_new_root(dir.path(), &[]).is_ok());
-        assert!(check_new_root(&dir.path().join("none"), &[]).is_err());
+        assert!(check_new_root(&a, true, &have_b).is_err());
+        assert!(check_new_root(dir.path(), true, &[]).is_ok());
+        assert!(check_new_root(&dir.path().join("none"), true, &[]).is_err());
+    }
+
+    #[test]
+    fn a_folder_read_without_subfolders_does_not_overlap() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = a.join("b");
+        std::fs::create_dir_all(&b).unwrap();
+        // a を直下だけで登録していれば、b は登録できる
+        let mut flat_a = root(&a.to_string_lossy());
+        flat_a.recursive = false;
+        assert!(check_new_root(&b, true, &[flat_a.clone()]).is_ok());
+        assert!(check_new_root(&a, false, &[flat_a]).is_err());
+        // b を登録していても、a を直下だけでなら登録できる
+        let have_b = [root(&b.to_string_lossy())];
+        assert!(check_new_root(&a, false, &have_b).is_ok());
     }
 }
