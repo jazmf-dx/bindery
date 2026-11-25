@@ -213,6 +213,50 @@ pub fn set_vfolder(lib: State<Shared>, ids: Vec<i64>, vfolder_id: i64, on: bool)
     lib.with(|c| db::file_into_vfolder(c, &ids, vfolder_id, on))
 }
 
+// ------------------------------------------------------------------ メモ
+
+/// メモの長さの上限（文字）。
+const NOTE_MAX: usize = 10_000;
+
+/// メモを書く。空白だけなら消す。アプリのデータに書くだけで、元のファイルには触らない。
+#[tauri::command]
+pub fn set_note(lib: State<Shared>, id: i64, note: String) -> CmdResult<()> {
+    let note: String = if note.trim().is_empty() {
+        String::new()
+    } else {
+        note.chars().take(NOTE_MAX).collect()
+    };
+    lib.with(|c| db::set_note(c, id, &note))
+}
+
+// ------------------------------------------------------------ 行方不明
+
+/// 行方不明のファイルを、手で選んだファイルへつなぎ直す（docs/CONCEPT.md「照合」の 4）。
+/// 選べるのは登録フォルダの中で、読み込みで見つかる場所のファイルだけ（外のものは次の読み込みでまた行方不明になる）。
+#[tauri::command]
+pub fn relink_file(app: AppHandle, lib: State<Shared>, id: i64, path: PathBuf) -> CmdResult<()> {
+    let roots = lib.with(|c| db::list_roots(c))?;
+    let root = library::root_for(&path, &roots).ok_or(
+        "登録フォルダの中のファイルを選んでください（サブフォルダを読まないフォルダでは、直下のファイルだけ）",
+    )?;
+    let found = crate::scan::found_at(std::path::Path::new(&root.path), &path).ok_or(
+        "扱えないファイルです（PDF・オフィス文書・テキストで、隠しフォルダなど読まない場所の外にあるもの）",
+    )?;
+    let root_id = root.id;
+    if !lib.with(|c| crate::scan::relink(c, id, root_id, found))? {
+        return Err("行方不明のファイルではありません".into());
+    }
+    // つなぎ直したファイルのハッシュを計算し直す
+    library::hash_in_background(&app);
+    Ok(())
+}
+
+/// 行方不明のファイルの記録を外す（付けたタグ・仮想フォルダ・メモも消える）。元のファイルには触らない。
+#[tauri::command]
+pub fn forget_files(lib: State<Shared>, ids: Vec<i64>) -> CmdResult<usize> {
+    lib.with(|c| db::forget_missing(c, &ids))
+}
+
 /// すべての登録フォルダを読み直す（照合）。
 #[tauri::command]
 pub fn rescan(app: AppHandle) {

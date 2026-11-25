@@ -71,26 +71,52 @@ pub fn walk(root: &Path, recursive: bool) -> Vec<Found> {
         if !entry.file_type().is_file() {
             continue;
         }
-        let path = entry.path();
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if kind_of(&ext).is_none() {
-            continue;
+        if let Some(f) = found_file(root, entry.path(), || entry.metadata().ok()) {
+            found.push(f);
         }
-        let Ok(meta) = entry.metadata() else { continue };
-        found.push(Found {
-            path: path.to_string_lossy().into_owned(),
-            name: entry.file_name().to_string_lossy().into_owned(),
-            ext,
-            size: meta.len() as i64,
-            mtime: mtime_ms(&meta),
-            file_id: file_id(path, &meta),
-            dir: rel_dir(root, path),
-        });
     }
     found
+}
+
+/// 扱う種類のファイルなら、その記録。`meta` は種類を確かめてから取る（読まないファイルの情報は取らない）。
+fn found_file(
+    root: &Path,
+    path: &Path,
+    meta: impl FnOnce() -> Option<std::fs::Metadata>,
+) -> Option<Found> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    kind_of(&ext)?;
+    let meta = meta()?;
+    Some(Found {
+        path: path.to_string_lossy().into_owned(),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        ext,
+        size: meta.len() as i64,
+        mtime: mtime_ms(&meta),
+        file_id: file_id(path, &meta),
+        dir: rel_dir(root, path),
+    })
+}
+
+/// 登録フォルダ `root` の中の 1 つのファイルを、`walk` と同じように読む（手でつなぎ直すとき）。
+/// 扱わない種類・読まない場所（隠しフォルダの中など）・ファイルでないものは None：
+/// 読み込みで見つからないので、次の読み込みでまた行方不明になってしまうため。
+pub fn found_at(root: &Path, path: &Path) -> Option<Found> {
+    let rel = path.strip_prefix(root).ok()?;
+    if rel
+        .components()
+        .any(|c| skipped(&c.as_os_str().to_string_lossy()))
+    {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    found_file(root, path, || Some(meta))
 }
 
 /// 登録フォルダから見た、ファイルのあるフォルダ（`a/b`。直下は空）。
@@ -168,6 +194,10 @@ struct Known {
 pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     let now = db::now_ms();
+    // 登録してから最初の読み込みで見つけたものは「新しく増えた」に入れない（docs/CONCEPT.md「最近の変更」）
+    let scanned = tx.query_row("SELECT scanned FROM roots WHERE id = ?1", [root_id], |r| {
+        r.get::<_, i64>(0)
+    })? != 0;
     // このフォルダで覚えているもの（パスで引く）
     let mut known: HashMap<String, Known> = HashMap::new();
     {
@@ -200,9 +230,11 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
                 let changed = k.size != f.size || k.mtime != f.mtime;
                 tx.execute(
                     "UPDATE files SET size = ?2, mtime = ?3, file_id = ?4, missing = 0,
-                        hash = CASE WHEN ?5 THEN NULL ELSE hash END, dir = ?6
+                        hash = CASE WHEN ?5 THEN NULL ELSE hash END, dir = ?6,
+                        changed_at = CASE WHEN ?5 THEN ?7 ELSE changed_at END,
+                        change_kind = CASE WHEN ?5 THEN 'updated' ELSE change_kind END
                      WHERE id = ?1",
-                    params![k.id, f.size, f.mtime, f.file_id, changed, f.dir],
+                    params![k.id, f.size, f.mtime, f.file_id, changed, f.dir, now],
                 )?;
             }
             None => fresh.push(f),
@@ -238,20 +270,34 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
         match hit {
             Some(i) => {
                 let g = gone.swap_remove(i);
+                // 動かした・名前を変えただけなら「変わった」にしない。中身も変わっていれば「更新」
                 let changed = g.size != f.size || g.mtime != f.mtime;
                 tx.execute(
                     "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, size = ?6,
                         mtime = ?7, missing = 0, hash = CASE WHEN ?8 THEN NULL ELSE hash END,
-                        dir = ?9
+                        dir = ?9,
+                        changed_at = CASE WHEN ?8 THEN ?10 ELSE changed_at END,
+                        change_kind = CASE WHEN ?8 THEN 'updated' ELSE change_kind END
                      WHERE id = ?1",
-                    params![g.id, root_id, f.path, f.name, f.ext, f.size, f.mtime, changed, f.dir],
+                    params![
+                        g.id, root_id, f.path, f.name, f.ext, f.size, f.mtime, changed, f.dir, now
+                    ],
                 )?;
             }
             None => {
+                let (changed_at, kind) = if scanned {
+                    (Some(now), Some("new"))
+                } else {
+                    (None, None)
+                };
                 tx.execute(
-                    "INSERT INTO files (root_id, path, name, ext, size, mtime, file_id, dir, added_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![root_id, f.path, f.name, f.ext, f.size, f.mtime, f.file_id, f.dir, now],
+                    "INSERT INTO files (root_id, path, name, ext, size, mtime, file_id, dir, added_at,
+                        changed_at, change_kind)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        root_id, f.path, f.name, f.ext, f.size, f.mtime, f.file_id, f.dir, now,
+                        changed_at, kind
+                    ],
                 )?;
             }
         }
@@ -261,6 +307,7 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
     for g in gone.iter().filter(|g| g.root_id == root_id) {
         tx.execute("UPDATE files SET missing = 1 WHERE id = ?1", [g.id])?;
     }
+    tx.execute("UPDATE roots SET scanned = 1 WHERE id = ?1", [root_id])?;
     tx.commit()
 }
 
@@ -320,7 +367,15 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
         tx.commit()?;
         return Ok(false);
     };
-    // 新しい行の中身を、行方不明だった行へ移す（行方不明の行の id を残す：あとで付くタグ・メモはそちらに付いている）。
+    merge_into(&tx, id, lost)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// 新しい行 `from` を、行方不明の行 `to` へまとめる：場所・大きさなどを `to` へ移し、`from` は消す。
+/// `to` の id を残す（付けたタグ・仮想フォルダ・メモはそちらに付いている）。
+/// `from` に付けたものも引き継ぐ。気付いた変化（最近の変更）は `to` のものを残す。
+fn merge_into(tx: &Connection, from: i64, to: i64) -> rusqlite::Result<()> {
     #[allow(clippy::type_complexity)]
     let row: (
         i64,
@@ -328,11 +383,13 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
         String,
         String,
         i64,
+        i64,
+        Option<String>,
         Option<String>,
         Option<String>,
     ) = tx.query_row(
-        "SELECT root_id, path, name, ext, mtime, file_id, dir FROM files WHERE id = ?1",
-        [id],
+        "SELECT root_id, path, name, ext, size, mtime, file_id, hash, dir FROM files WHERE id = ?1",
+        [from],
         |r| {
             Ok((
                 r.get(0)?,
@@ -342,16 +399,49 @@ pub fn record_hash(conn: &mut Connection, id: i64, hash: Option<&str>) -> rusqli
                 r.get(4)?,
                 r.get(5)?,
                 r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
             ))
         },
     )?;
-    // つなぎ直す前に新しい行へ付けたタグ・仮想フォルダも引き継ぐ
-    db::copy_organization(&tx, id, lost)?;
-    tx.execute("DELETE FROM files WHERE id = ?1", [id])?;
+    db::copy_organization(tx, from, to)?;
+    // 先に消す（path は UNIQUE）
+    tx.execute("DELETE FROM files WHERE id = ?1", [from])?;
     tx.execute(
-        "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, mtime = ?6,
-            file_id = ?7, dir = ?8, missing = 0 WHERE id = ?1",
-        params![lost, row.0, row.1, row.2, row.3, row.4, row.5, row.6],
+        "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, size = ?6, mtime = ?7,
+            file_id = ?8, hash = ?9, dir = ?10, missing = 0 WHERE id = ?1",
+        params![to, row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8],
+    )?;
+    Ok(())
+}
+
+/// 行方不明の行 `lost` を、手で選んだファイル `f`（登録フォルダ `root_id` の中）へつなぎ直す。
+/// そのファイルの行がもうあれば（読み込みで新しく見つけていれば）、その行を `lost` へまとめる。
+/// 中身が同じとは限らないので、ハッシュは計算し直す。`lost` が行方不明でなければ何もせず false。
+pub fn relink(conn: &mut Connection, lost: i64, root_id: i64, f: Found) -> rusqlite::Result<bool> {
+    use rusqlite::OptionalExtension;
+    let tx = conn.transaction()?;
+    let missing: Option<i64> = tx
+        .query_row("SELECT missing FROM files WHERE id = ?1", [lost], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    if missing != Some(1) {
+        return Ok(false);
+    }
+    let existing: Option<i64> = tx
+        .query_row("SELECT id FROM files WHERE path = ?1", [&f.path], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    // 同じパスに戻ってきていたなら、まとめるものは無い
+    if let Some(existing) = existing.filter(|&e| e != lost) {
+        merge_into(&tx, existing, lost)?;
+    }
+    tx.execute(
+        "UPDATE files SET root_id = ?2, path = ?3, name = ?4, ext = ?5, size = ?6, mtime = ?7,
+            file_id = ?8, dir = ?9, hash = NULL, missing = 0 WHERE id = ?1",
+        params![lost, root_id, f.path, f.name, f.ext, f.size, f.mtime, f.file_id, f.dir],
     )?;
     tx.commit()?;
     Ok(true)
@@ -509,6 +599,98 @@ mod tests {
         let r = &db::list_roots(&conn).unwrap()[0];
         assert!(!r.recursive);
         assert!(r.dirs.is_empty());
+    }
+
+    fn changes(conn: &Connection) -> Vec<(String, String)> {
+        let mut v: Vec<_> = db::list_files(conn, db::Place::Recent)
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.name, f.change.unwrap_or_default()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn notices_new_and_updated_files_but_not_the_first_read_or_moves() {
+        let (dir, mut conn, root) = setup();
+        let d = dir.path();
+        fs::write(d.join("a.pdf"), "a").unwrap();
+        fs::write(d.join("b.pdf"), "b").unwrap();
+        // 登録して最初に読んだものは「増えた」に入れない
+        scan(&mut conn, root, d);
+        assert!(changes(&conn).is_empty());
+        // 何も変わらなければ出ない
+        scan(&mut conn, root, d);
+        assert!(changes(&conn).is_empty());
+        // 中身が変わった・増えた
+        fs::write(d.join("a.pdf"), "changed").unwrap();
+        fs::write(d.join("c.pdf"), "c").unwrap();
+        // 動かしただけ（中身はそのまま）は出ない
+        fs::create_dir(d.join("sub")).unwrap();
+        fs::rename(d.join("b.pdf"), d.join("sub/b2.pdf")).unwrap();
+        scan(&mut conn, root, d);
+        assert_eq!(
+            changes(&conn),
+            [
+                ("a.pdf".into(), "updated".into()),
+                ("c.pdf".into(), "new".into())
+            ]
+        );
+        let r = &db::list_roots(&conn).unwrap()[0];
+        assert_eq!(r.recent, 2);
+    }
+
+    #[test]
+    fn a_missing_file_can_be_relinked_by_hand() {
+        let (dir, mut conn, root) = setup();
+        let d = dir.path();
+        fs::write(d.join("old.pdf"), "old").unwrap();
+        scan(&mut conn, root, d);
+        let lost = db::list_files(&conn, db::Place::All).unwrap()[0].id;
+        let tag = db::ensure_tag(&conn, "契約").unwrap();
+        db::tag_files(&mut conn, &[lost], tag, true).unwrap();
+        db::set_note(&conn, lost, "最新版").unwrap();
+        // 中身の違う別のファイルを置いて（ハッシュではつながらない）、元を消す。
+        // 先に作るのは、消したファイルの inode が使い回されてファイル ID でつながらないようにするため
+        fs::write(d.join("new.pdf"), "rewritten").unwrap();
+        fs::remove_file(d.join("old.pdf")).unwrap();
+        scan(&mut conn, root, d);
+        assert_eq!(names(&conn, db::Place::Missing), ["old.pdf"]);
+        // 新しいファイルの行に付けたものも引き継ぐ
+        let fresh = db::list_files(&conn, db::Place::All).unwrap()[0].id;
+        let other = db::ensure_tag(&conn, "請求").unwrap();
+        db::tag_files(&mut conn, &[fresh], other, true).unwrap();
+
+        let f = found_at(d, &d.join("new.pdf")).unwrap();
+        assert!(relink(&mut conn, lost, root, f.clone()).unwrap());
+        let files = db::list_files(&conn, db::Place::All).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!((files[0].id, files[0].name.as_str()), (lost, "new.pdf"));
+        assert_eq!(files[0].tags, [tag, other]);
+        assert_eq!(files[0].note, "最新版");
+        assert!(names(&conn, db::Place::Missing).is_empty());
+        // 行方不明でない行はつなぎ直さない
+        assert!(!relink(&mut conn, lost, root, f).unwrap());
+        // 読み直しても、そのまま
+        scan(&mut conn, root, d);
+        assert_eq!(db::list_files(&conn, db::Place::All).unwrap()[0].id, lost);
+    }
+
+    #[test]
+    fn relinking_takes_only_files_the_scan_would_find() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        fs::create_dir_all(d.join(".hidden")).unwrap();
+        fs::write(d.join(".hidden/a.pdf"), "a").unwrap();
+        fs::write(d.join("photo.jpg"), "x").unwrap();
+        fs::write(d.join("ok.PDF"), "x").unwrap();
+        assert!(found_at(d, &d.join(".hidden/a.pdf")).is_none());
+        assert!(found_at(d, &d.join("photo.jpg")).is_none());
+        assert!(found_at(d, &d.join("none.pdf")).is_none());
+        assert!(found_at(d, &d.join(".hidden")).is_none());
+        let ok = found_at(d, &d.join("ok.PDF")).unwrap();
+        assert_eq!((ok.ext.as_str(), ok.dir.as_str()), ("pdf", ""));
     }
 
     #[test]

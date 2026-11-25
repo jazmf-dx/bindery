@@ -21,6 +21,9 @@ export type Command = {
 };
 
 let appearance: Appearance = "system";
+
+/** 絞り込みの入力欄の id。 */
+export const SEARCH_FIELD = "bindery-search";
 const st = () => useStore.getState();
 
 export const COMMANDS: Command[] = [
@@ -29,6 +32,24 @@ export const COMMANDS: Command[] = [
   { id: "file.open", label: "開く", keys: ["Enter", "Mod+ArrowDown"], run: () => st().openSelected() },
   { id: "file.reveal", label: "Finder / エクスプローラーで表示", keys: ["Mod+Shift+R"], run: () => st().revealSelected() },
   { id: "file.copyPath", label: "パスをコピー", keys: ["Mod+Alt+C"], run: () => st().copyPaths() },
+  { id: "file.relink", label: "つなぎ直す…", run: () => void st().relinkSelected() },
+  { id: "file.forget", label: "記録を外す…", run: () => void st().forgetSelected() },
+
+  // 探す
+  {
+    id: "find",
+    label: "絞り込む",
+    keys: ["Mod+F"],
+    inFields: true,
+    // 一覧の上の入力欄へ（FileList.tsx の Header）
+    run: () => {
+      const el = document.getElementById(SEARCH_FIELD);
+      if (el instanceof HTMLInputElement) {
+        el.focus();
+        el.select();
+      }
+    },
+  },
 
   // 選ぶ
   {

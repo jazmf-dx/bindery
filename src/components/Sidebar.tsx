@@ -1,10 +1,10 @@
 /**
- * サイドバー。上から 未整理・行方不明 → 仮想フォルダ → タグ → 登録フォルダ（docs/CONCEPT.md「サイドバー」）。
+ * サイドバー。上から 最近の変更・未整理・行方不明 → 仮想フォルダ → タグ → 登録フォルダ（docs/CONCEPT.md「サイドバー」）。
  * 仮想フォルダとタグの行は、一覧からドラッグしたファイルの落とし先になる（`data-drop`、DragLayer.tsx）。
  * 登録フォルダの下には、中のフォルダを元の階層のまま木で出す（開け閉めできる。はじめは閉じている）。
  */
 import { useState, type ReactNode } from "react";
-import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
 import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
 import { runCommand } from "../lib/commands";
 import { dragRegion } from "../lib/titleBar";
@@ -16,6 +16,7 @@ export function Sidebar() {
   const tags = useStore((s) => s.tags);
   const vfolders = useStore((s) => s.vfolders);
   const missingCount = useStore((s) => s.missingCount);
+  const recentCount = useStore((s) => s.recentCount);
   const editing = useStore((s) => s.editing);
   const setEditing = useStore((s) => s.setEditing);
   const createTag = useStore((s) => s.createTag);
@@ -26,6 +27,13 @@ export function Sidebar() {
       <div className="h-[var(--titlebar)] shrink-0" />
       <Section>
         <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />
+        <PlaceRow
+          place={{ kind: "recent" }}
+          icon={<History size={15} />}
+          label="最近の変更"
+          title="この 7 日のあいだに中身が変わったファイルと、増えたファイル"
+          count={recentCount || undefined}
+        />
         <PlaceRow place={{ kind: "unsorted" }} icon={<Inbox size={15} />} label="未整理" />
         <PlaceRow place={{ kind: "missing" }} icon={<HelpCircle size={15} />} label="行方不明" count={missingCount || undefined} />
       </Section>

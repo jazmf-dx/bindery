@@ -23,6 +23,9 @@ const BY_EXT: Record<string, Kind> = {
 
 export const kindOf = (ext: string): Kind => BY_EXT[ext] ?? "text";
 
+/** 扱う拡張子（ファイルを選ぶダイアログの絞り込み）。 */
+export const EXTENSIONS = Object.keys(BY_EXT);
+
 const LABEL: Record<Kind, string> = {
   pdf: "PDF",
   word: "Word",

@@ -5,7 +5,11 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { FileRow, Place, Root, Tag, VFolder } from "../lib/api";
 
-type MockRoot = { id: number; path: string; recursive: boolean };
+type MockRoot = { id: number; path: string; recursive: boolean; scanned: boolean };
+
+/** 「最近の変更」に出す日数（src-tauri/src/db.rs `RECENT_DAYS`）。 */
+const RECENT_MS = 7 * 86_400_000;
+const isRecent = (f: FileRow) => !f.missing && f.changedAt !== null && f.changedAt >= Date.now() - RECENT_MS;
 
 const roots: MockRoot[] = [];
 const files: FileRow[] = [];
@@ -25,6 +29,8 @@ const SAMPLE = [
   "メモ/2025/去年のメモ.md",
   "README.txt",
 ];
+/** 2 回目からの読み込みで「増えた」ことにするもの（最近の変更の見本）。 */
+const SAMPLE_LATER = ["見積書_2026-11.pdf"];
 
 const nameOf = (p: string) => p.split("/").pop() ?? p;
 const extOf = (p: string) => (p.includes(".") ? p.split(".").pop()!.toLowerCase() : "");
@@ -53,6 +59,7 @@ function toRoot(r: MockRoot): Root {
     name: nameOf(r.path),
     count: mine.filter((f) => !f.missing).length,
     missing: mine.filter((f) => f.missing).length,
+    recent: mine.filter(isRecent).length,
     recursive: r.recursive,
     dirs: [...counts].map(([path, count]) => ({ path, count })).sort((x, y) => x.path.localeCompare(y.path, "ja")),
   };
@@ -63,7 +70,7 @@ function scanLater(root: MockRoot) {
   scanning = true;
   void emit("scan-state", true);
   setTimeout(() => {
-    for (const rel of SAMPLE) {
+    for (const rel of root.scanned ? [...SAMPLE, ...SAMPLE_LATER] : SAMPLE) {
       if (!root.recursive && rel.includes("/")) continue;
       const path = `${root.path}/${rel}`;
       if (files.some((f) => f.path === path)) continue;
@@ -78,8 +85,16 @@ function scanLater(root: MockRoot) {
         missing: false,
         tags: [],
         folders: [],
+        note: "",
+        // 登録して最初に読んだものは「増えた」に入れない
+        changedAt: root.scanned ? Date.now() : null,
+        change: root.scanned ? "new" : null,
       });
     }
+    // 2 回目からは、中身が変わったことにする見本を 1 件
+    const edited = root.scanned ? files.find((f) => f.rootId === root.id && f.name === "月次集計.xlsx") : undefined;
+    if (edited) Object.assign(edited, { mtime: Date.now(), changedAt: Date.now(), change: "updated" });
+    root.scanned = true;
     // 行方不明の見本を 1 件
     const lost = files.find((f) => f.rootId === root.id && f.name === "README.txt");
     if (lost) lost.missing = true;
@@ -109,7 +124,7 @@ export function installMockBackend() {
         case "add_root": {
           const path = String(a.path);
           if (roots.some((r) => r.path === path)) throw `「${nameOf(path)}」はもう登録してあります`;
-          const root = { id: nextId++, path, recursive: Boolean(a.recursive) };
+          const root = { id: nextId++, path, recursive: Boolean(a.recursive), scanned: false };
           roots.push(root);
           scanLater(root);
           return toRoot(root);
@@ -135,6 +150,8 @@ export function installMockBackend() {
                 return !f.missing && !f.tags.length && !f.folders.length;
               case "missing":
                 return f.missing;
+              case "recent":
+                return isRecent(f);
               case "root":
                 return !f.missing && f.rootId === p.id && dirOf(f) === p.dir;
               case "tag":
@@ -208,14 +225,46 @@ export function installMockBackend() {
         case "set_vfolder":
           setOn(a.ids as number[], "folders", Number(a.vfolderId), Boolean(a.on));
           return null;
+        case "set_note": {
+          const f = files.find((x) => x.id === Number(a.id));
+          if (f) f.note = String(a.note).trim() ? String(a.note) : "";
+          return null;
+        }
+        case "relink_file": {
+          const lost = files.find((x) => x.id === Number(a.id));
+          if (!lost?.missing) throw "行方不明のファイルではありません";
+          const path = String(a.path);
+          const root = roots.find((r) => path.startsWith(`${r.path}/`));
+          if (!root) throw "登録フォルダの中のファイルを選んでください";
+          // そのファイルの行がもうあれば、付けたものを引き継いでまとめる
+          const i = files.findIndex((x) => x.path === path && x.id !== lost.id);
+          if (i >= 0) {
+            const dup = files.splice(i, 1)[0];
+            lost.tags = [...new Set([...lost.tags, ...dup.tags])];
+            lost.folders = [...new Set([...lost.folders, ...dup.folders])];
+            if (!lost.note) lost.note = dup.note;
+          }
+          Object.assign(lost, { rootId: root.id, path, name: nameOf(path), ext: extOf(path), missing: false });
+          return null;
+        }
+        case "forget_files": {
+          const ids = new Set(a.ids as number[]);
+          const before = files.length;
+          for (let i = files.length - 1; i >= 0; i--) if (files[i].missing && ids.has(files[i].id)) files.splice(i, 1);
+          return before - files.length;
+        }
         case "rescan":
           roots.forEach(scanLater);
           return null;
         case "scan_status":
           return scanning;
-        case "plugin:dialog|open":
+        case "plugin:dialog|open": {
+          // ファイルを選ぶダイアログ（つなぎ直す）の代わり：最初の登録フォルダの中へ移したことにする
+          const o = a.options as { directory?: boolean } | undefined;
+          if (!o?.directory) return roots.length ? `${roots[0].path}/移した/README.txt` : null;
           // フォルダを選ぶダイアログの代わり
           return `/Users/demo/共有/案件${roots.length + 1}`;
+        }
         case "plugin:dialog|message": {
           // 確かめるダイアログ（ask）は［OK］［キャンセル］の名前付きで届く
           const b = a.buttons as { OkCancelCustom?: [string, string]; YesNoCancelCustom?: [string, string, string] } | undefined;

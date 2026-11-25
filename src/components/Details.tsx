@@ -1,10 +1,11 @@
 /**
- * 詳細パネル（docs/CONCEPT.md「プレビュー」「サイドバー」）。選んだファイルの情報・タグ・仮想フォルダと、開く操作。
+ * 詳細パネル（docs/CONCEPT.md「プレビュー」「サイドバー」）。選んだファイルの情報・タグ・仮想フォルダ・メモと、開く操作。
  * 複数を選んだときは、タグ・仮想フォルダの付け外しをまとめて行う（一部にだけ付いているものは薄く出す）。
+ * メモは 1 件を選んだときだけ書ける。行方不明のファイルは、つなぎ直すか記録を外せる。
  * 小さなプレビューはあとで（CSP の判断と一緒に）。今は Quick Look（スペース）で大きく見る。
  */
-import { useState, type ReactNode } from "react";
-import { Copy, Eye, FolderSearch, Folder, SquareArrowOutUpRight, Tag as TagIcon, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Copy, Eye, FolderSearch, Folder, Link2, SquareArrowOutUpRight, Tag as TagIcon, Trash2, X } from "lucide-react";
 import type { FileRow } from "../lib/api";
 import { keyLabel, runCommand } from "../lib/commands";
 import { composing } from "../lib/ime";
@@ -26,9 +27,11 @@ export function Details() {
         ) : (
           <>
             {selected.length === 1 ? <About file={selected[0]} /> : <div className="font-semibold">{selected.length} 件を選択</div>}
+            {selected.every((f) => f.missing) && <MissingActions files={selected} />}
             <Actions files={selected} />
             <Tags files={selected} />
             <Folders files={selected} />
+            {selected.length === 1 && <Note key={selected[0].id} file={selected[0]} />}
           </>
         )}
       </div>
@@ -85,6 +88,80 @@ function Actions({ files }: { files: FileRow[] }) {
       {btn("file.quickLook", <Eye size={13} />, "Quick Look")}
       {btn("file.reveal", <FolderSearch size={13} />, "場所を表示", off || files.length > 1)}
       {btn("file.copyPath", <Copy size={13} />, "パスをコピー", false)}
+    </div>
+  );
+}
+
+/** 行方不明のファイル：今の場所へつなぎ直す（1 件のとき）・記録を外す。 */
+function MissingActions({ files }: { files: FileRow[] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {files.length === 1 && (
+        <button
+          className="flex items-center gap-1.5 rounded-md bg-accent-fill px-2 py-1 text-white"
+          title="移した先のファイルを選んで、付けた情報ごとつなぎ直します"
+          onClick={() => runCommand("file.relink")}
+        >
+          <Link2 size={13} />
+          つなぎ直す…
+        </button>
+      )}
+      <button
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-control px-2 py-1"
+        title="アプリの記録から消します。元のファイルには触りません"
+        onClick={() => runCommand("file.forget")}
+      >
+        <Trash2 size={13} />
+        記録を外す…
+      </button>
+    </div>
+  );
+}
+
+/**
+ * メモ。欄を離れたとき（ほかのファイルを選んだときも）に書く。
+ * ファイルごとに作り直す（`key`）ので、書きかけが別のファイルへ移ることはない。
+ */
+function Note({ file }: { file: FileRow }) {
+  const setNote = useStore((s) => s.setNote);
+  const [text, setText] = useState(file.note);
+  const draft = useRef(file.note);
+  const saved = useRef(file.note);
+  // ほかで書き換わったら（読み直したとき）合わせる。書きかけのときは上書きしない
+  useEffect(() => {
+    if (draft.current === saved.current) {
+      setText(file.note);
+      draft.current = file.note;
+    }
+    saved.current = file.note;
+  }, [file.note]);
+  const save = () => {
+    if (draft.current === saved.current) return;
+    saved.current = draft.current;
+    void setNote(file.id, draft.current);
+  };
+  // 選ぶファイルが変わって欄が消えるときも書く
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => () => saveRef.current(), []);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[11px] font-semibold text-dim">メモ</div>
+      <textarea
+        value={text}
+        rows={4}
+        placeholder="このファイルは何か、どの版が最新か…（アプリの中だけに残り、元のファイルには書きません）"
+        onChange={(e) => {
+          setText(e.target.value);
+          draft.current = e.target.value;
+        }}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (composing(e)) return;
+          if (e.key === "Escape") e.currentTarget.blur();
+        }}
+        className="resize-y rounded-md border border-edge bg-field px-2 py-1 outline-none focus:border-accent"
+      />
     </div>
   );
 }
