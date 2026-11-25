@@ -60,7 +60,23 @@ const SCHEMA: &[&str] = &[
     "ALTER TABLE roots ADD COLUMN recursive INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE files ADD COLUMN dir TEXT;
     CREATE INDEX files_dir ON files(root_id, dir);",
+    // 4: メモと、アプリが変化に気付いた日時と中身（`new` 新しく増えた／`updated` 中身が変わった）。
+    //    `scanned` は登録してから 1 度読んだか（最初の読み込みで見つけたものは「増えた」に入れない）。
+    //    前からの登録フォルダは読んであるので 1
+    "ALTER TABLE roots ADD COLUMN scanned INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE files ADD COLUMN note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE files ADD COLUMN changed_at INTEGER;
+    ALTER TABLE files ADD COLUMN change_kind TEXT;
+    CREATE INDEX files_changed ON files(changed_at);",
 ];
+
+/// 「最近の変更」に出す日数（docs/CONCEPT.md「最近の変更」）。設定画面ができるまでは固定。
+pub const RECENT_DAYS: i64 = 7;
+
+/// 「最近の変更」に出すものの下限（気付いた日時、ミリ秒）。
+pub fn recent_since() -> i64 {
+    now_ms() - RECENT_DAYS * 86_400_000
+}
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
@@ -106,6 +122,8 @@ pub struct Root {
     /// 中のファイルの数（行方不明を含まない）。
     pub count: i64,
     pub missing: i64,
+    /// 「最近の変更」に出るファイルの数。
+    pub recent: i64,
     /// サブフォルダの中まで読むか（登録するときに選ぶ）。
     pub recursive: bool,
     /// 中のフォルダ（サイドバーの木）。扱うファイルが下のどこかにあるものだけ。名前の順。
@@ -126,11 +144,12 @@ pub fn list_roots(conn: &Connection) -> rusqlite::Result<Vec<Root>> {
     let mut st = conn.prepare(
         "SELECT r.id, r.path, r.recursive,
             (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 0),
-            (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 1)
+            (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 1),
+            (SELECT COUNT(*) FROM files f WHERE f.root_id = r.id AND f.missing = 0 AND f.changed_at >= ?1)
          FROM roots r",
     )?;
     let mut roots = st
-        .query_map([], |r| {
+        .query_map([recent_since()], |r| {
             let path: String = r.get(1)?;
             Ok(Root {
                 id: r.get(0)?,
@@ -139,6 +158,7 @@ pub fn list_roots(conn: &Connection) -> rusqlite::Result<Vec<Root>> {
                 recursive: r.get::<_, i64>(2)? != 0,
                 count: r.get(3)?,
                 missing: r.get(4)?,
+                recent: r.get(5)?,
                 dirs: Vec::new(),
             })
         })?
@@ -201,7 +221,7 @@ pub fn root_path(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>>
 
 pub fn insert_root(conn: &Connection, path: &str, recursive: bool) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO roots (path, recursive, added_at) VALUES (?1, ?2, ?3)",
+        "INSERT INTO roots (path, recursive, scanned, added_at) VALUES (?1, ?2, 0, ?3)",
         params![path, recursive, now_ms()],
     )?;
     Ok(conn.last_insert_rowid())
@@ -229,6 +249,12 @@ pub struct FileRow {
     pub tags: Vec<i64>,
     /// 入っている仮想フォルダの id。
     pub folders: Vec<i64>,
+    /// メモ（無ければ空）。
+    pub note: String,
+    /// アプリが変化に気付いた日時（ミリ秒）。気付いたことが無ければ None。
+    pub changed_at: Option<i64>,
+    /// 気付いた変化：`new`（新しく増えた）か `updated`（中身が変わった）。
+    pub change: Option<String>,
 }
 
 /// 一覧に出すもの。サイドバーの項目に対応する。
@@ -240,6 +266,8 @@ pub enum Place {
     /// タグも仮想フォルダも無いもの
     Unsorted,
     Missing,
+    /// 最近、中身が変わったものと新しく増えたもの（`RECENT_DAYS` 日のうちに気付いたもの。行方不明を除く）
+    Recent,
     /// 登録フォルダ（`dir` が空）か、その中のフォルダに直接入っているもの
     /// （下のフォルダの中身は含めない。Finder と同じ）
     Root {
@@ -272,6 +300,10 @@ pub fn list_files(conn: &Connection, place: Place) -> rusqlite::Result<Vec<FileR
             vec![],
         ),
         Place::Missing => ("f.missing = 1", vec![]),
+        Place::Recent => (
+            "f.missing = 0 AND f.changed_at >= ?1",
+            vec![recent_since().into()],
+        ),
         Place::Root { id, dir } => (
             "f.missing = 0 AND f.root_id = ?1 AND f.dir = ?2",
             vec![id.into(), dir.into()],
@@ -289,7 +321,8 @@ pub fn list_files(conn: &Connection, place: Place) -> rusqlite::Result<Vec<FileR
     let sql = format!(
         "SELECT f.id, f.root_id, f.path, f.name, f.ext, f.size, f.mtime, f.missing,
             (SELECT GROUP_CONCAT(tag_id) FROM file_tags WHERE file_id = f.id),
-            (SELECT GROUP_CONCAT(vfolder_id) FROM vfolder_files WHERE file_id = f.id)
+            (SELECT GROUP_CONCAT(vfolder_id) FROM vfolder_files WHERE file_id = f.id),
+            f.note, f.changed_at, f.change_kind
          FROM files f WHERE {filter}
          ORDER BY f.name COLLATE NOCASE, f.path"
     );
@@ -306,6 +339,9 @@ pub fn list_files(conn: &Connection, place: Place) -> rusqlite::Result<Vec<FileR
             missing: r.get::<_, i64>(7)? != 0,
             tags: ids(r.get(8)?),
             folders: ids(r.get(9)?),
+            note: r.get(10)?,
+            changed_at: r.get(11)?,
+            change: r.get(12)?,
         })
     };
     let rows = st
@@ -326,15 +362,36 @@ pub fn paths_of(conn: &Connection, ids: &[i64]) -> rusqlite::Result<Vec<String>>
     Ok(out)
 }
 
-/// タグ・仮想フォルダが付いたファイルの数（登録を外す前の確認用）。
+/// タグ・仮想フォルダ・メモが付いたファイルの数（登録を外す前の確認用）。
 pub fn organized_count(conn: &Connection, root_id: i64) -> rusqlite::Result<i64> {
     conn.query_row(
-        "SELECT COUNT(*) FROM files f WHERE f.root_id = ?1 AND (
-            EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.id)
+        "SELECT COUNT(*) FROM files f WHERE f.root_id = ?1 AND (f.note != ''
+            OR EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.id)
             OR EXISTS (SELECT 1 FROM vfolder_files v WHERE v.file_id = f.id))",
         [root_id],
         |r| r.get(0),
     )
+}
+
+/// メモを書く（空なら消す）。アプリのデータに書くだけで、元のファイルには触らない。
+pub fn set_note(conn: &Connection, id: i64, note: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE files SET note = ?2 WHERE id = ?1",
+        params![id, note],
+    )?;
+    Ok(())
+}
+
+/// 行方不明のファイルの記録を外す（付けたタグ・仮想フォルダ・メモも消える）。
+/// 行方不明でないものは外さない（次の読み込みでまた出てくるだけなので）。外した数を返す。
+pub fn forget_missing(conn: &mut Connection, ids: &[i64]) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    let mut n = 0;
+    for id in ids {
+        n += tx.execute("DELETE FROM files WHERE id = ?1 AND missing = 1", [id])?;
+    }
+    tx.commit()?;
+    Ok(n)
 }
 
 // ------------------------------------------------------------------ タグ
@@ -535,7 +592,12 @@ pub fn file_into_vfolder(
 }
 
 /// 行 `from` に付いていたタグ・仮想フォルダを、行 `to` にも付ける（照合でつなぎ直すとき）。
+/// メモは `to` に無ければ写す（両方にあれば `to` のものを残す）。
 pub fn copy_organization(conn: &Connection, from: i64, to: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE files SET note = (SELECT note FROM files WHERE id = ?1) WHERE id = ?2 AND note = ''",
+        params![from, to],
+    )?;
     conn.execute(
         "INSERT OR IGNORE INTO file_tags (file_id, tag_id) SELECT ?2, tag_id FROM file_tags WHERE file_id = ?1",
         params![from, to],
@@ -640,6 +702,23 @@ mod tests {
         delete_vfolder(&conn, top).unwrap();
         assert!(list_vfolders(&conn).unwrap().is_empty());
         assert_eq!(names(&conn, Place::Unsorted), ["0.pdf"]);
+    }
+
+    #[test]
+    fn notes_count_as_organized_and_only_missing_rows_are_forgotten() {
+        let (mut conn, ids) = with_files(2);
+        let root: i64 = conn
+            .query_row("SELECT id FROM roots", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(organized_count(&conn, root).unwrap(), 0);
+        set_note(&conn, ids[0], "メモ").unwrap();
+        assert_eq!(organized_count(&conn, root).unwrap(), 1);
+        assert_eq!(list_files(&conn, Place::All).unwrap()[0].note, "メモ");
+        conn.execute("UPDATE files SET missing = 1 WHERE id = ?1", [ids[1]])
+            .unwrap();
+        assert_eq!(forget_missing(&mut conn, &ids).unwrap(), 1);
+        assert_eq!(names(&conn, Place::All), ["0.pdf"]);
+        assert!(names(&conn, Place::Missing).is_empty());
     }
 
     #[test]

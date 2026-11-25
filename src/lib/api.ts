@@ -13,6 +13,8 @@ export type Root = {
   /** 中のファイルの数（行方不明を含まない）。 */
   count: number;
   missing: number;
+  /** 「最近の変更」に出るファイルの数。 */
+  recent: number;
   /** サブフォルダの中まで読むか（登録するときに選ぶ）。 */
   recursive: boolean;
   /** 中のフォルダ（サイドバーの木）。親が子より先、名前の順。 */
@@ -41,6 +43,12 @@ export type FileRow = {
   tags: number[];
   /** 入っている仮想フォルダの id。 */
   folders: number[];
+  /** メモ（無ければ空）。 */
+  note: string;
+  /** アプリが変化に気付いた日時（ミリ秒）。気付いたことが無ければ null。 */
+  changedAt: number | null;
+  /** 気付いた変化：新しく増えた（new）／中身が変わった（updated）。 */
+  change: "new" | "updated" | null;
 };
 
 /** 一覧に出すもの。サイドバーの項目（src-tauri/src/db.rs `Place`）。 */
@@ -48,6 +56,8 @@ export type Place =
   | { kind: "all" }
   | { kind: "unsorted" }
   | { kind: "missing" }
+  /** 最近、中身が変わったものと新しく増えたもの（src-tauri/src/db.rs `RECENT_DAYS` 日のうちに気付いたもの）。 */
+  | { kind: "recent" }
   /** 登録フォルダ（`dir` が空）か、その中のフォルダ。直接入っているものだけ。 */
   | { kind: "root"; id: number; dir: string }
   | { kind: "tag"; id: number }
@@ -100,6 +110,13 @@ export const api = {
   deleteVFolder: (id: number) => invoke<void>("delete_vfolder", { id }),
   moveVFolder: (id: number, parentId: number | null) => invoke<void>("move_vfolder", { id, parentId }),
   setVFolder: (ids: number[], vfolderId: number, on: boolean) => invoke<void>("set_vfolder", { ids, vfolderId, on }),
+
+  /** メモを書く（空白だけなら消す）。 */
+  setNote: (id: number, note: string) => invoke<void>("set_note", { id, note }),
+  /** 行方不明のファイルを、選んだファイル（登録フォルダの中）へつなぎ直す。扱えないファイルはエラーの文で断る。 */
+  relinkFile: (id: number, path: string) => invoke<void>("relink_file", { id, path }),
+  /** 行方不明のファイルの記録を外す（付けたタグ・仮想フォルダ・メモも消える）。外した数を返す。 */
+  forgetFiles: (ids: number[]) => invoke<number>("forget_files", { ids }),
 
   /** ログのファイルを Finder / エクスプローラーで表示する。 */
   revealLog: () => invoke<void>("reveal_log"),

@@ -5,7 +5,9 @@
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { create } from "zustand";
 import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from "./lib/api";
+import { EXTENSIONS } from "./lib/kinds";
 import { warn } from "./lib/log";
+import { loadSort, nextSort, RECENT_SORT, saveSort, visible, type Sort, type SortKey } from "./lib/view";
 
 export const samePlace = (a: Place, b: Place) =>
   a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null) && ("dir" in a ? a.dir : null) === ("dir" in b ? b.dir : null);
@@ -22,7 +24,16 @@ export type Editing =
 
 type State = {
   roots: Root[];
+  /** 今の場所のファイル（データベースから読んだまま）。 */
+  allFiles: FileRow[];
+  /** 一覧に出すもの：`allFiles` を絞り込み、並べ替えたもの。選ぶ・矢印で動くのはこの順。 */
   files: FileRow[];
+  /** 絞り込みの文字（今の場所の中で絞る。場所を変えても残す）。 */
+  query: string;
+  /** 並べ替え（全体で 1 つ覚える）。 */
+  sort: Sort;
+  /** 「最近の変更」での並べ替え（覚えない。開くたびに気付いた日の新しい順）。 */
+  recentSort: Sort;
   tags: Tag[];
   vfolders: VFolder[];
   place: Place;
@@ -32,11 +43,14 @@ type State = {
   anchor: number | null;
   scanning: boolean;
   missingCount: number;
+  recentCount: number;
   drag: Drag | null;
   editing: Editing | null;
 
   load: () => Promise<void>;
   go: (place: Place) => void;
+  setQuery: (query: string) => void;
+  sortBy: (key: SortKey) => void;
   click: (id: number, e: { shift: boolean; toggle: boolean }) => void;
   selectAll: () => void;
   clearSelection: () => void;
@@ -54,6 +68,11 @@ type State = {
   quickLook: () => void;
   revealSelected: () => void;
   copyPaths: () => void;
+  /** 行方不明のファイル（1 件）を、ダイアログで選んだファイルへつなぎ直す。 */
+  relinkSelected: () => Promise<void>;
+  /** 選んでいる行方不明のファイルの記録を外す（確かめてから）。 */
+  forgetSelected: () => Promise<void>;
+  setNote: (id: number, note: string) => Promise<void>;
 
   addTag: (ids: number[], name: string) => Promise<void>;
   setTag: (ids: number[], tagId: number, on: boolean) => Promise<void>;
@@ -79,9 +98,21 @@ async function attempt(title: string, f: () => Promise<unknown>) {
   await useStore.getState().load();
 }
 
+/** 今の状態から、一覧に出す行と、まだ見えている選択を作り直す。 */
+function refresh(s: Pick<State, "allFiles" | "query" | "sort" | "recentSort" | "place" | "tags" | "selected">) {
+  const recent = s.place.kind === "recent";
+  const files = visible(s.allFiles, s.query, recent ? s.recentSort : s.sort, recent, s.tags);
+  const still = new Set(files.map((f) => f.id));
+  return { files, selected: s.selected.filter((id) => still.has(id)) };
+}
+
 export const useStore = create<State>((set, get) => ({
   roots: [],
+  allFiles: [],
   files: [],
+  query: "",
+  sort: loadSort(),
+  recentSort: RECENT_SORT,
   tags: [],
   vfolders: [],
   place: { kind: "all" },
@@ -89,6 +120,7 @@ export const useStore = create<State>((set, get) => ({
   anchor: null,
   scanning: false,
   missingCount: 0,
+  recentCount: 0,
   drag: null,
   editing: null,
 
@@ -115,19 +147,19 @@ export const useStore = create<State>((set, get) => ({
             (place.kind === "tag" && !tags.some((t) => t.id === place.id)) ||
             (place.kind === "folder" && !vfolders.some((v) => v.id === place.id));
           const missingCount = roots.reduce((n, r) => n + r.missing, 0);
+          const recentCount = roots.reduce((n, r) => n + r.recent, 0);
           // 選んでいた中のフォルダが無くなった（ファイルが無くなった・動いた）ら、その登録フォルダへ
           if (place.kind === "root" && place.dir && !gone && !roots.find((r) => r.id === place.id)?.dirs.some((d) => d.path === place.dir)) {
-            set({ roots, tags, vfolders, missingCount, place: { kind: "root", id: place.id, dir: "" } });
+            set({ roots, tags, vfolders, missingCount, recentCount, place: { kind: "root", id: place.id, dir: "" } });
             again = true;
             continue;
           }
           if (gone) {
-            set({ roots, tags, vfolders, missingCount, place: { kind: "all" } });
+            set({ roots, tags, vfolders, missingCount, recentCount, place: { kind: "all" } });
             again = true;
             continue;
           }
-          const still = new Set(files.map((f) => f.id));
-          set({ roots, tags, vfolders, files, missingCount, selected: get().selected.filter((id) => still.has(id)) });
+          set({ roots, tags, vfolders, missingCount, recentCount, allFiles: files, ...refresh({ ...get(), allFiles: files, tags }) });
         } catch (e) {
           warn("load", e);
         }
@@ -138,8 +170,23 @@ export const useStore = create<State>((set, get) => ({
   },
 
   go: (place) => {
-    set({ place, selected: [], anchor: null });
+    // 「最近の変更」は、開くたびに気付いた日の新しい順から
+    set({ place, selected: [], anchor: null, ...(place.kind === "recent" ? { recentSort: RECENT_SORT } : {}) });
     get().load();
+  },
+
+  setQuery: (query) => set({ query, ...refresh({ ...get(), query }) }),
+
+  sortBy: (key) => {
+    const s = get();
+    if (s.place.kind === "recent") {
+      const recentSort = nextSort(s.recentSort, key);
+      set({ recentSort, ...refresh({ ...s, recentSort }) });
+      return;
+    }
+    const sort = nextSort(s.sort, key);
+    saveSort(sort);
+    set({ sort, ...refresh({ ...s, sort }) });
   },
 
   click: (id, { shift, toggle }) => {
@@ -231,11 +278,11 @@ export const useStore = create<State>((set, get) => ({
   removeRoot: async (id) => {
     const root = get().roots.find((r) => r.id === id);
     if (!root) return;
-    // タグ・仮想フォルダが付いたものがあれば、消える前に確かめる（docs/CONCEPT.md「登録を外す」）
+    // タグ・仮想フォルダ・メモが付いたものがあれば、消える前に確かめる（docs/CONCEPT.md「登録を外す」）
     const organized = await api.rootOrganizedCount(id).catch(() => 0);
     if (organized > 0) {
       const ok = await ask(
-        `「${root.name}」の ${organized} 件のファイルに付けたタグと仮想フォルダも外れます。元のファイルには触りません。`,
+        `「${root.name}」の ${organized} 件のファイルに付けたタグ・仮想フォルダ・メモも消えます。元のファイルには触りません。`,
         { title: "登録を外しますか？", kind: "warning", okLabel: "外す", cancelLabel: "やめる" },
       );
       if (!ok) return;
@@ -262,6 +309,40 @@ export const useStore = create<State>((set, get) => ({
       .join("\n");
     if (text) navigator.clipboard.writeText(text).catch((e) => warn("copy path", e));
   },
+
+  relinkSelected: async () => {
+    const { files, selected, roots } = get();
+    const f = selected.length === 1 ? files.find((x) => x.id === selected[0]) : undefined;
+    if (!f?.missing) return;
+    const path = await open({
+      title: `「${f.name}」の今の場所を選ぶ`,
+      defaultPath: roots.find((r) => r.id === f.rootId)?.path,
+      multiple: false,
+      directory: false,
+      filters: [{ name: "PDF・オフィス文書・テキスト", extensions: EXTENSIONS }],
+    });
+    if (typeof path !== "string") return;
+    await attempt("つなぎ直せませんでした", () => api.relinkFile(f.id, path));
+  },
+
+  forgetSelected: async () => {
+    const { files, selected } = get();
+    const targets = files.filter((f) => f.missing && selected.includes(f.id));
+    if (targets.length === 0) return;
+    const organized = targets.filter((f) => f.tags.length || f.folders.length || f.note).length;
+    const what = targets.length === 1 ? `「${targets[0].name}」` : `${targets.length} 件の行方不明のファイル`;
+    const lost = organized > 0 ? `${targets.length === 1 ? "" : `${organized} 件に`}付けたタグ・仮想フォルダ・メモも消えます。` : "";
+    const ok = await ask(`${what}の記録をアプリから消します。${lost}元のファイルには触りません。`, {
+      title: "記録を外しますか？",
+      kind: "warning",
+      okLabel: "外す",
+      cancelLabel: "やめる",
+    });
+    if (!ok) return;
+    await attempt("記録を外せませんでした", () => api.forgetFiles(targets.map((f) => f.id)));
+  },
+
+  setNote: (id, note) => attempt("メモを書けませんでした", () => api.setNote(id, note)),
 
   addTag: (ids, name) => attempt("タグを付けられませんでした", () => api.addTag(ids, name)),
   setTag: (ids, tagId, on) => attempt("タグを変えられませんでした", () => api.setTag(ids, tagId, on)),

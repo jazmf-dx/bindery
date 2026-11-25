@@ -103,7 +103,7 @@ fn scan_all(app: &AppHandle, lib: &Library) {
 }
 
 /// ハッシュがまだ無いファイルを、1 件ずつ裏で計算する（docs/CONCEPT.md「照合」の 3）。
-fn hash_in_background(app: &AppHandle) {
+pub fn hash_in_background(app: &AppHandle) {
     let lib = app.state::<Shared>().inner().clone();
     if lib.hashing.swap(true, Ordering::SeqCst) {
         return;
@@ -172,6 +172,23 @@ pub fn check_new_root(path: &Path, recursive: bool, existing: &[db::Root]) -> Re
     Ok(())
 }
 
+/// そのファイルを読む登録フォルダ。サブフォルダを読まないフォルダは、直下のファイルだけ。
+/// 登録フォルダは入れ子にならない（`check_new_root`）が、直下だけ読むフォルダの中に別の登録フォルダが
+/// あるときは、より深い（パスの長い）ほうを選ぶ。
+pub fn root_for<'a>(path: &Path, roots: &'a [db::Root]) -> Option<&'a db::Root> {
+    roots
+        .iter()
+        .filter(|r| {
+            let rp = Path::new(&r.path);
+            if r.recursive {
+                path != rp && path.starts_with(rp)
+            } else {
+                path.parent() == Some(rp)
+            }
+        })
+        .max_by_key(|r| r.path.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +204,7 @@ mod tests {
                 .into(),
             count: 0,
             missing: 0,
+            recent: 0,
             recursive: true,
             dirs: Vec::new(),
         }
@@ -205,6 +223,22 @@ mod tests {
         assert!(check_new_root(&a, true, &have_b).is_err());
         assert!(check_new_root(dir.path(), true, &[]).is_ok());
         assert!(check_new_root(&dir.path().join("none"), true, &[]).is_err());
+    }
+
+    #[test]
+    fn finds_the_root_that_reads_a_file() {
+        let mut flat = root("/a");
+        flat.recursive = false;
+        let mut deep = root("/a/b");
+        deep.id = 2;
+        let roots = [flat, deep];
+        let id = |p: &str| root_for(Path::new(p), &roots).map(|r| r.id);
+        assert_eq!(id("/a/x.pdf"), Some(1));
+        assert_eq!(id("/a/b/x.pdf"), Some(2));
+        assert_eq!(id("/a/b/c/x.pdf"), Some(2));
+        // 直下だけ読むフォルダの、サブフォルダの中は読まない
+        assert_eq!(id("/a/c/x.pdf"), None);
+        assert_eq!(id("/z/x.pdf"), None);
     }
 
     #[test]

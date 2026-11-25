@@ -69,8 +69,19 @@ async function build(): Promise<Menu> {
       // 入力欄では文字を、一覧ではファイルを全部選ぶ
       item("select.all"),
       item("select.none"),
+      sep(),
+      item("find"),
     ]),
-    submenu("ファイル操作", [item("file.open"), item("file.quickLook"), sep(), item("file.reveal"), item("file.copyPath")]),
+    submenu("ファイル操作", [
+      item("file.open"),
+      item("file.quickLook"),
+      sep(),
+      item("file.reveal"),
+      item("file.copyPath"),
+      sep(),
+      item("file.relink"),
+      item("file.forget"),
+    ]),
     submenu("表示", [item("view.appearance")]),
     ...(isMac
       ? [
