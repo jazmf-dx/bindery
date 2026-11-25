@@ -2,17 +2,20 @@
  * 一覧（リストだけ。docs/CONCEPT.md「一覧」）。名前・場所・種類・更新日・タグの列。
  * 選ぶ：クリック、⌘/Ctrl クリックで足す・外す、Shift クリックで範囲。ダブルクリックで開く。
  * 行をドラッグして、サイドバーの仮想フォルダ・タグへ落とせる（DragLayer.tsx）。
- * 見出しの上の欄で、今の場所の中を絞り込む。列の見出しを押すと並べ替える（docs/CONCEPT.md「探す」）。
+ * 見出しの上の欄で、今の場所の中を絞り込む。その下の条件の行で、タグ・種類・更新日で絞る。
+ * 列の見出しを押すと並べ替える（docs/CONCEPT.md「探す」「条件の組み合わせ」）。
+ * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  */
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, FileSpreadsheet, FileText, FileType, Presentation, RefreshCw, Search, StickyNote, X } from "lucide-react";
+import { ArrowDown, ArrowUp, FileSpreadsheet, FileText, FileType, Presentation, RefreshCw, Search, StickyNote, Tag as TagIcon, X } from "lucide-react";
 import type { FileRow, Root } from "../lib/api";
 import { keyLabel, runCommand, SEARCH_FIELD } from "../lib/commands";
+import { cmd, openMenu, type Entry } from "../lib/contextMenu";
 import { composing } from "../lib/ime";
-import { formatDate, kindLabel, kindOf, relativeDir } from "../lib/kinds";
+import { formatDate, kindLabel, kindName, kindOf, KINDS, relativeDir, type Kind } from "../lib/kinds";
 import { dragRegion } from "../lib/titleBar";
-import type { SortKey } from "../lib/view";
+import { hasFilters, NO_FILTERS, type SortKey, type Within } from "../lib/view";
 import { folderPath, useStore } from "../store";
 
 const isMac = navigator.userAgent.includes("Mac");
@@ -49,7 +52,7 @@ export function Header() {
   useStore((s) => s.vfolders);
   const count = useStore((s) => s.files.length);
   const total = useStore((s) => s.allFiles.length);
-  const query = useStore((s) => s.query);
+  const narrowed = useStore((s) => s.query.trim() !== "" || hasFilters(s.filters));
   const selected = useStore((s) => s.selected.length);
   const scanning = useStore((s) => s.scanning);
   return (
@@ -57,7 +60,7 @@ export function Header() {
       <div className="flex h-10 items-center gap-3">
         <span className="truncate font-semibold">{placeTitle()}</span>
         <span className="shrink-0 text-dim tabular-nums">
-          {query.trim() ? `${count} / ${total} 件` : `${count} 件`}
+          {narrowed ? `${count} / ${total} 件` : `${count} 件`}
           {selected > 1 ? `（${selected} 件を選択）` : ""}
         </span>
         <span className="flex-1" />
@@ -108,6 +111,89 @@ function SearchField() {
         </button>
       )}
     </label>
+  );
+}
+
+const WITHIN: { value: Within; label: string }[] = [
+  { value: "today", label: "今日" },
+  { value: 7, label: "7 日以内" },
+  { value: 30, label: "30 日以内" },
+  { value: 365, label: "1 年以内" },
+];
+
+/**
+ * 条件の行：タグ（すべて付いているもの）・種類・更新日で、今の場所の中を絞る（docs/CONCEPT.md「条件の組み合わせ」）。
+ * 条件が無いときも同じ高さで出す（一覧の位置を変えない）。
+ */
+export function ConditionBar() {
+  const filters = useStore((s) => s.filters);
+  const tags = useStore((s) => s.tags);
+  const setFilters = useStore((s) => s.setFilters);
+  const chosen = tags.filter((t) => filters.tags.includes(t.id));
+  const left = tags.filter((t) => !filters.tags.includes(t.id));
+  const select = "rounded-md border border-edge bg-field px-1.5 py-0.5 outline-none focus:border-accent";
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-2 overflow-x-auto border-b border-line px-4 text-[12px]">
+      <span className="shrink-0 text-dim">条件</span>
+      {chosen.map((t) => (
+        <span key={t.id} className="flex shrink-0 items-center gap-1 rounded-md bg-control py-0.5 pr-0.5 pl-1.5">
+          <TagIcon size={11} />
+          {t.name}
+          <button aria-label={`タグ「${t.name}」の条件を外す`} className="ghost rounded p-0.5" onClick={() => setFilters({ ...filters, tags: filters.tags.filter((id) => id !== t.id) })}>
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+      <select
+        aria-label="タグの条件を足す"
+        value=""
+        disabled={left.length === 0}
+        onChange={(e) => e.target.value && setFilters({ ...filters, tags: [...filters.tags, Number(e.target.value)] })}
+        className={`${select} shrink-0 disabled:off`}
+      >
+        <option value="">{chosen.length ? "＋ かつ タグ…" : "タグ…"}</option>
+        {left.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="種類の条件"
+        value={filters.kind ?? ""}
+        onChange={(e) => setFilters({ ...filters, kind: (e.target.value || null) as Kind | null })}
+        className={`${select} shrink-0 ${filters.kind ? "border-accent" : ""}`}
+      >
+        <option value="">すべての種類</option>
+        {KINDS.map((k) => (
+          <option key={k} value={k}>
+            {kindName(k)}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="更新日の条件"
+        value={filters.within ?? ""}
+        onChange={(e) => {
+          const v = e.target.value;
+          setFilters({ ...filters, within: v === "" ? null : v === "today" ? "today" : (Number(v) as Within) });
+        }}
+        className={`${select} shrink-0 ${filters.within !== null ? "border-accent" : ""}`}
+      >
+        <option value="">いつ更新したものでも</option>
+        {WITHIN.map((w) => (
+          <option key={w.value} value={w.value}>
+            更新日が{w.label}
+          </option>
+        ))}
+      </select>
+      <span className="flex-1" />
+      {hasFilters(filters) && (
+        <button className="ghost shrink-0 rounded px-1.5 py-0.5 text-dim" onClick={() => setFilters(NO_FILTERS)}>
+          条件を外す
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -208,6 +294,12 @@ function FileLine({ file: f, top, on, recent, where, tagNames }: { file: FileRow
         startDrag(e.clientX, e.clientY, f.id, on && !toggle && !e.shiftKey);
       }}
       onDoubleClick={() => runCommand("file.open")}
+      onContextMenu={(e) => {
+        // 選んでいない行なら、その行を選んでから（Finder と同じ）
+        const st = useStore.getState();
+        if (!st.selected.includes(f.id)) st.click(f.id, { shift: false, toggle: false });
+        openMenu(e, fileMenu);
+      }}
       className={`absolute inset-x-0 grid ${COLS} items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"} ${f.missing ? "opacity-60" : ""}`}
       style={{ top, height: ROW_H }}
     >
@@ -241,6 +333,43 @@ function FileLine({ file: f, top, on, recent, where, tagNames }: { file: FileRow
       </span>
     </div>
   );
+}
+
+/** 一覧の行の右クリックのメニュー（選んでいるファイルに対して）。 */
+function fileMenu(): Entry[] {
+  const { files, selected, place, tags, vfolders, setTag, setFolder } = useStore.getState();
+  const chosen = files.filter((f) => selected.includes(f.id));
+  if (chosen.length === 0) return [];
+  const ids = chosen.map((f) => f.id);
+  const allMissing = chosen.every((f) => f.missing);
+  const onAll = (key: "tags" | "folders", id: number) => chosen.every((f) => f[key].includes(id));
+  const here =
+    place.kind === "tag"
+      ? `タグ「${tags.find((t) => t.id === place.id)?.name ?? ""}」を外す`
+      : place.kind === "folder"
+        ? `仮想フォルダ「${folderPath(vfolders, place.id)}」から外す`
+        : null;
+  return [
+    cmd("file.open", !allMissing),
+    cmd("file.quickLook", !allMissing),
+    cmd("file.reveal", !allMissing && chosen.length === 1),
+    cmd("file.copyPath"),
+    "-",
+    {
+      label: "タグを付ける",
+      items: tags.filter((t) => !onAll("tags", t.id)).map((t) => ({ label: t.name, run: () => void setTag(ids, t.id, true) })),
+    },
+    {
+      label: "仮想フォルダに入れる",
+      items: vfolders
+        .filter((v) => !onAll("folders", v.id))
+        .map((v) => ({ id: v.id, path: folderPath(vfolders, v.id) }))
+        .sort((a, b) => a.path.localeCompare(b.path, "ja"))
+        .map((v) => ({ label: v.path, run: () => void setFolder(ids, v.id, true) })),
+    },
+    ...(here ? [{ label: here, run: () => runCommand("file.removeFromPlace") }] : []),
+    ...(allMissing ? ["-" as const, cmd("file.relink", chosen.length === 1), cmd("file.forget")] : []),
+  ];
 }
 
 /** 「最近の変更」の行の印：新規（新しく増えた）／更新（中身が変わった）。 */
@@ -290,6 +419,7 @@ function EmptyList() {
   const place = useStore((s) => s.place);
   const scanning = useStore((s) => s.scanning);
   const query = useStore((s) => s.query);
+  const filters = useStore((s) => s.filters);
   const total = useStore((s) => s.allFiles.length);
   if (roots.length === 0) {
     return (
@@ -302,11 +432,11 @@ function EmptyList() {
       </div>
     );
   }
-  if (query.trim() && total > 0) {
+  if ((query.trim() || hasFilters(filters)) && total > 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-dim">
-        <div>「{query.trim()}」に合うファイルは、ここにはありません</div>
-        <div className="text-[12px]">名前・場所・タグ・メモで、今の場所の中を絞り込んでいます。全体から探すには「すべてのファイル」で</div>
+        <div>{query.trim() ? `「${query.trim()}」と条件に合うファイルは、ここにはありません` : "条件に合うファイルは、ここにはありません"}</div>
+        <div className="text-[12px]">今の場所の中を絞り込んでいます。全体から探すには「すべてのファイル」で</div>
       </div>
     );
   }

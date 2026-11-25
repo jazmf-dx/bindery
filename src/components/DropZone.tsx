@@ -1,5 +1,6 @@
 /**
  * Finder / エクスプローラーからウィンドウへ落としたフォルダを登録する（store.ts `addRoots`）。
+ * ファイルだけを落としたときは、入っているフォルダを直下だけで登録して、そのファイルを選ぶ。
  * 重ねているあいだは、ウィンドウ全体に「落とすと登録する」と出す。
  * Tauri がウィンドウへのドロップを受けて知らせる（`onDragDropEvent`）。ページのドラッグ＆ドロップは使わない
  * （docs/ARCHITECTURE.md「ドラッグ」）。ブラウザ（モック）では動かない。
@@ -36,7 +37,7 @@ export function DropZone() {
       <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-accent-fill bg-panel px-10 py-8 text-center">
         <FolderPlus size={28} className="text-dim" />
         <div className="font-semibold">落とすと、フォルダを登録します</div>
-        <div className="text-[12px] text-dim">ファイルは元の場所に置いたままです。ファイルを 1 つずつ足すことは、まだできません</div>
+        <div className="text-[12px] text-dim">ファイルは元の場所に置いたままです。ファイルを落としたときは、入っているフォルダを登録して選びます</div>
       </div>
     </div>
   );

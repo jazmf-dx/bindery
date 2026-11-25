@@ -77,6 +77,21 @@ pub fn remove_root(lib: State<Shared>, id: i64) -> CmdResult<()> {
     lib.with(|c| db::delete_root(c, id))
 }
 
+/// 登録フォルダか、その中のフォルダ（`dir`。登録フォルダからの相対、区切りは `/`）を Finder / エクスプローラーで表示する。
+/// 登録フォルダの外は指せない（`..` などは断る）。
+#[tauri::command]
+pub fn reveal_root(lib: State<Shared>, id: i64, dir: String) -> CmdResult<()> {
+    let root = lib
+        .with(|c| db::root_path(c, id))?
+        .ok_or("登録フォルダが見つかりません")?;
+    let path = library::inside_root(std::path::Path::new(&root), &dir)
+        .ok_or("登録フォルダの中のフォルダではありません")?;
+    if !path.exists() {
+        return Err(format!("フォルダが見つかりません：{}", path.display()));
+    }
+    tauri_plugin_opener::reveal_item_in_dir(path).map_err(err)
+}
+
 /// そのフォルダのファイルのうち、タグか仮想フォルダが付いているものの数（外す前の確認用）。
 #[tauri::command]
 pub fn root_organized_count(lib: State<Shared>, id: i64) -> CmdResult<i64> {

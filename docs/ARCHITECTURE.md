@@ -30,12 +30,15 @@
 一覧の行のドラッグは、ブラウザのドラッグ＆ドロップを使わず、マウスの動きで作っている（`src/components/FileList.tsx` の `startDrag`、`DragLayer.tsx`）。
 Tauri はウィンドウへのファイルのドロップを受ける設定のため、Windows ではページの中のドラッグ＆ドロップが届かない。
 落とし先はサイドバーの行の `data-drop="tag:ID"` / `"folder:ID"`。
+仮想フォルダの行も同じ作りでドラッグする（`Sidebar.tsx` の `startFolderDrag`）。落とし先は `"folder:ID"` と、一番上へ移す `"folder:top"`（「仮想フォルダ」の見出し）。
 
 Finder / エクスプローラーからウィンドウへ落としたものは、Tauri の `onDragDropEvent` で受ける（`src/components/DropZone.tsx`）。
 フォルダか・サブフォルダがあるかを `inspect_paths` で確かめてから、`store.ts` の `addRoots` で登録する（［フォルダを登録…］も同じ道を通る）。
+ファイルだけを落としたときは、入っているフォルダを直下だけで登録し、読み込みが終わって一覧に出たらそのファイルを選ぶ（`addFilesByFolder`）。
 
 ## メニューとキー
 
 操作は `src/lib/commands.ts` の表に 1 回だけ書き、メニューバー（`src/lib/menuBar.ts`）・キー・画面のボタンはそこから使う。
 ⌘ / Ctrl の組み合わせはメニューの accelerator が受け、ページは受けない（2 回動かないように）。
+右クリックのメニューも OS のメニュー（`src/lib/contextMenu.ts`）。項目は表の操作（`cmd`）か store の操作から組み立て、キーは付けない（メニューバーと 2 回動かないように）。
 スペース・Enter・矢印・Esc は入力欄の文字にも使うので、ページが受ける。入力欄にいるときは、表で `inFields` にしたものだけが効く。

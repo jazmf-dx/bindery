@@ -1,13 +1,21 @@
 /**
- * 一覧からのドラッグ（FileList.tsx の `startDrag` が始める）。カーソルの横に名前を出し、
- * 下にある落とし先（サイドバーの `data-drop="tag:ID"` / `"folder:ID"`）に印を付け、
- * 離したところへタグを付ける・仮想フォルダに入れる。Esc で取りやめる。
+ * ドラッグ。カーソルの横に名前を出し、下にある落とし先（サイドバーの `data-drop`）に印を付ける。Esc で取りやめる。
+ * - 一覧の行（FileList.tsx `startDrag`）：`tag:ID` へ落とすとタグを付け、`folder:ID` へ落とすと仮想フォルダに入れる
+ * - 仮想フォルダの行（Sidebar.tsx `startFolderDrag`）：`folder:ID` へ落とすとその下へ、`folder:top` へ落とすと一番上へ移す
  */
 import { useEffect, useState } from "react";
-import { useStore } from "../store";
+import { useStore, type Drag } from "../store";
 
-function targetAt(x: number, y: number): HTMLElement | null {
-  return (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>("[data-drop]") ?? null;
+/** そのドラッグで落とせる先か。 */
+function accepts(drag: Drag, drop: string): boolean {
+  const [kind, id] = drop.split(":");
+  if (drag.folder !== undefined) return kind === "folder" && id !== String(drag.folder);
+  return (kind === "tag" || kind === "folder") && id !== "top";
+}
+
+function targetAt(drag: Drag, x: number, y: number): HTMLElement | null {
+  const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>("[data-drop]") ?? null;
+  return el && accepts(drag, el.dataset.drop ?? "") ? el : null;
 }
 
 export function DragLayer() {
@@ -31,14 +39,16 @@ export function DragLayer() {
     };
     const move = (e: MouseEvent) => {
       setPos({ x: e.clientX, y: e.clientY });
-      mark(targetAt(e.clientX, e.clientY));
+      mark(targetAt(drag, e.clientX, e.clientY));
     };
     const up = (e: MouseEvent) => {
-      const el = targetAt(e.clientX, e.clientY);
+      const el = targetAt(drag, e.clientX, e.clientY);
       end();
-      const [kind, id] = (el?.dataset.drop ?? "").split(":");
+      if (!el) return;
+      const [kind, id] = (el.dataset.drop ?? "").split(":");
       const st = useStore.getState();
-      if (kind === "tag") void st.setTag(drag.ids, Number(id), true);
+      if (drag.folder !== undefined) void st.moveFolder(drag.folder, id === "top" ? null : Number(id));
+      else if (kind === "tag") void st.setTag(drag.ids, Number(id), true);
       else if (kind === "folder") void st.setFolder(drag.ids, Number(id), true);
     };
     const key = (e: KeyboardEvent) => {

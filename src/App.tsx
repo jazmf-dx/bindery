@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Details } from "./components/Details";
 import { DragLayer } from "./components/DragLayer";
 import { DropZone } from "./components/DropZone";
-import { FileList, Header } from "./components/FileList";
+import { ConditionBar, FileList, Header } from "./components/FileList";
 import { Sidebar } from "./components/Sidebar";
 import { api, FILES_CHANGED, SCAN_STATE } from "./lib/api";
 import { listenCommandKeys } from "./lib/commands";
@@ -37,6 +37,7 @@ export default function App() {
       <Sidebar />
       <main className="flex min-w-0 flex-1 flex-col bg-bg">
         <Header />
+        <ConditionBar />
         <FileList />
       </main>
       <Details />

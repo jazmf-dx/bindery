@@ -3,7 +3,7 @@
  * （docs/CONCEPT.md「探す」）。データベースから読んだ行はそのままにして、ここで写しを作る。
  */
 import type { FileRow, Tag } from "./api";
-import { kindLabel } from "./kinds";
+import { kindLabel, kindOf, type Kind } from "./kinds";
 import { warn } from "./log";
 
 export type SortKey = "name" | "place" | "kind" | "date";
@@ -11,6 +11,33 @@ export type SortKey = "name" | "place" | "kind" | "date";
 export type Sort = { key: SortKey; desc: boolean };
 
 export const DEFAULT_SORT: Sort = { key: "name", desc: false };
+
+/** 更新日の条件：今日（0 時から）か、その日数のうち。 */
+export type Within = "today" | 7 | 30 | 365;
+
+/**
+ * 一覧の上の条件（docs/CONCEPT.md「条件の組み合わせ」）。今の場所の中で絞る。
+ * タグはすべて付いているもの（かつ）、種類は 1 つ、更新日はファイルの更新日時で。
+ */
+export type Filters = { tags: number[]; kind: Kind | null; within: Within | null };
+
+export const NO_FILTERS: Filters = { tags: [], kind: null, within: null };
+
+export const hasFilters = (f: Filters) => f.tags.length > 0 || f.kind !== null || f.within !== null;
+
+/** 更新日の条件の下限（ミリ秒）。 */
+export function withinSince(w: Within, now = new Date()): number {
+  if (w === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return now.getTime() - w * 86_400_000;
+}
+
+export function passes(f: FileRow, filters: Filters, since: number | null): boolean {
+  if (filters.tags.some((t) => !f.tags.includes(t))) return false;
+  if (filters.kind !== null && kindOf(f.ext) !== filters.kind) return false;
+  if (since !== null && f.mtime < since) return false;
+  return true;
+}
+
 /** 「最近の変更」の既定：気付いた日の新しい順。 */
 export const RECENT_SORT: Sort = { key: "date", desc: true };
 
@@ -55,10 +82,11 @@ export function compare(sort: Sort, recent: boolean): (a: FileRow, b: FileRow) =
   };
 }
 
-export function visible(all: FileRow[], query: string, sort: Sort, recent: boolean, tags: Tag[]): FileRow[] {
+export function visible(all: FileRow[], query: string, filters: Filters, sort: Sort, recent: boolean, tags: Tag[]): FileRow[] {
   const terms = termsOf(query);
   const tagName = new Map(tags.map((t) => [t.id, t.name]));
-  return all.filter((f) => matches(f, terms, tagName)).sort(compare(sort, recent));
+  const since = filters.within === null ? null : withinSince(filters.within);
+  return all.filter((f) => passes(f, filters, since) && matches(f, terms, tagName)).sort(compare(sort, recent));
 }
 
 /** 列の見出しを押したとき：同じ列なら逆に、別の列なら日付は新しい順・ほかは昇順から。 */

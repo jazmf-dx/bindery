@@ -138,6 +138,9 @@ export function installMockBackend() {
           for (let i = files.length - 1; i >= 0; i--) if (files[i].rootId === id) files.splice(i, 1);
           return null;
         }
+        case "reveal_root":
+          console.info(`mock: ${cmd}`, a);
+          return null;
         case "root_organized_count":
           return files.filter((f) => f.rootId === Number(a.id) && (f.tags.length || f.folders.length)).length;
         case "list_files": {

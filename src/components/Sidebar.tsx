@@ -2,11 +2,14 @@
  * サイドバー。上から 最近の変更・未整理・行方不明 → 仮想フォルダ → タグ → 登録フォルダ（docs/CONCEPT.md「サイドバー」）。
  * 仮想フォルダとタグの行は、一覧からドラッグしたファイルの落とし先になる（`data-drop`、DragLayer.tsx）。
  * 登録フォルダの下には、中のフォルダを元の階層のまま木で出す（開け閉めできる。はじめは閉じている）。
+ * 仮想フォルダの行はドラッグで別の仮想フォルダの下へ（「仮想フォルダ」の見出しへ落とすと一番上へ）移せる。
+ * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  */
 import { useState, type ReactNode } from "react";
 import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
 import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
-import { runCommand } from "../lib/commands";
+import { command, runCommand } from "../lib/commands";
+import { openMenu, type Entry } from "../lib/contextMenu";
 import { dragRegion } from "../lib/titleBar";
 import { samePlace, useStore } from "../store";
 import { HoverButton, NameInput, Section } from "./ui";
@@ -40,6 +43,7 @@ export function Sidebar() {
 
       <Section
         title="仮想フォルダ"
+        drop="folder:top"
         action={
           <button aria-label="新しい仮想フォルダ" title="新しい仮想フォルダ" className="ghost rounded p-0.5 text-dim" onClick={() => setEditing({ kind: "newFolder", parentId: null })}>
             <Plus size={13} />
@@ -107,10 +111,13 @@ type RowProps = {
   twisty?: ReactNode;
   onClick?: () => void;
   onDoubleClick?: () => void;
+  onMouseDown?: (e: React.MouseEvent) => void;
+  /** 右クリックのメニューの中身。 */
+  menu?: () => Entry[];
   trailing?: ReactNode;
 };
 
-function Row({ icon, label, count, title, active, dim, depth = 0, drop, twisty, onClick, onDoubleClick, trailing }: RowProps) {
+function Row({ icon, label, count, title, active, dim, depth = 0, drop, twisty, onClick, onDoubleClick, onMouseDown, menu, trailing }: RowProps) {
   return (
     <div
       role="button"
@@ -118,6 +125,8 @@ function Row({ icon, label, count, title, active, dim, depth = 0, drop, twisty, 
       data-drop={drop}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onMouseDown={onMouseDown}
+      onContextMenu={menu ? (e) => openMenu(e, menu) : undefined}
       style={{ paddingLeft: 8 + depth * 14 }}
       className={`group flex cursor-default items-center gap-2 rounded-md py-1 pr-1.5 data-[over]:!bg-tonal data-[over]:!text-on-tonal ${active ? "bg-chosen" : "ghost"} ${dim ? "text-dim" : ""}`}
     >
@@ -174,11 +183,33 @@ function FolderTree({ parentId, depth, vfolders }: { parentId: number | null; de
   );
 }
 
+/**
+ * 仮想フォルダの行のドラッグ。押したまま 4px 動いたら始める（一覧の行と同じ作り：FileList.tsx `startDrag`）。
+ * 名前を打ち込んでいる欄の中では始めない。
+ */
+function startFolderDrag(e: React.MouseEvent, folder: VFolder) {
+  if (e.button !== 0 || (e.target as HTMLElement).closest("input, button")) return;
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  const move = (m: MouseEvent) => {
+    if (Math.hypot(m.clientX - x0, m.clientY - y0) < 4) return;
+    stop();
+    useStore.getState().setDrag({ ids: [], folder: folder.id, x: m.clientX, y: m.clientY, label: folder.name });
+  };
+  const stop = () => {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", stop);
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", stop);
+}
+
 function FolderRow({ folder, depth, hasChildren }: { folder: VFolder; depth: number; hasChildren: boolean }) {
   const editing = useStore((s) => s.editing);
   const setEditing = useStore((s) => s.setEditing);
   const renameFolder = useStore((s) => s.renameFolder);
   const deleteFolder = useStore((s) => s.deleteFolder);
+  const moveFolder = useStore((s) => s.moveFolder);
   const place: Place = { kind: "folder", id: folder.id };
   const renaming = editing?.kind === "folder" && editing.id === folder.id;
   return (
@@ -186,6 +217,14 @@ function FolderRow({ folder, depth, hasChildren }: { folder: VFolder; depth: num
       place={place}
       depth={depth}
       drop={`folder:${folder.id}`}
+      onMouseDown={(e) => startFolderDrag(e, folder)}
+      menu={() => [
+        { label: "中に仮想フォルダを作る", run: () => setEditing({ kind: "newFolder", parentId: folder.id }) },
+        { label: "名前を変える", run: () => setEditing({ kind: "folder", id: folder.id }) },
+        ...(folder.parentId !== null ? [{ label: "一番上へ移す", run: () => void moveFolder(folder.id, null) }] : []),
+        "-",
+        { label: "仮想フォルダを消す…", run: () => void deleteFolder(folder.id) },
+      ]}
       icon={hasChildren ? <FolderOpen size={15} /> : <Folder size={15} />}
       label={
         renaming ? (
@@ -226,6 +265,11 @@ function TagRow({ tag }: { tag: Tag }) {
     <PlaceRow
       place={{ kind: "tag", id: tag.id }}
       drop={`tag:${tag.id}`}
+      menu={() => [
+        { label: "名前を変える", run: () => setEditing({ kind: "tag", id: tag.id }) },
+        "-",
+        { label: "タグを消す…", run: () => void deleteTag(tag.id) },
+      ]}
       icon={<TagIcon size={15} />}
       label={
         renaming ? (
@@ -251,6 +295,16 @@ function TagRow({ tag }: { tag: Tag }) {
   );
 }
 
+/** 登録フォルダ・中のフォルダの右クリックのメニュー。 */
+function rootMenu(root: Root, dir: string): Entry[] {
+  const st = useStore.getState();
+  return [
+    { label: command("folder.reveal").label, run: () => st.revealRoot(root.id, dir) },
+    { label: command("folder.rescan").label, run: () => runCommand("folder.rescan") },
+    ...(dir ? [] : ["-" as const, { label: "登録を外す…", run: () => void st.removeRoot(root.id) }]),
+  ];
+}
+
 function RootRow({ root }: { root: Root }) {
   const removeRoot = useStore((s) => s.removeRoot);
   const [open, setOpen] = useState(false);
@@ -261,6 +315,7 @@ function RootRow({ root }: { root: Root }) {
         place={{ kind: "root", id: root.id, dir: "" }}
         icon={<Folder size={15} />}
         twisty={<Twisty has={top.length > 0} open={open} onToggle={() => setOpen(!open)} />}
+        menu={() => rootMenu(root, "")}
         label={root.name}
         title={root.recursive ? root.path : `${root.path}（サブフォルダは読まない）`}
         // 一覧と同じく、直接入っているファイルの数（中のフォルダの分は、その行に出る）
@@ -287,6 +342,7 @@ function DirRow({ root, dir, depth }: { root: Root; dir: Dir; depth: number }) {
         depth={depth}
         icon={<Folder size={15} />}
         twisty={<Twisty has={children.length > 0} open={open} onToggle={() => setOpen(!open)} />}
+        menu={() => rootMenu(root, dir.path)}
         label={dir.path.slice(dir.path.lastIndexOf("/") + 1)}
         title={dir.path}
         count={dir.count || undefined}
