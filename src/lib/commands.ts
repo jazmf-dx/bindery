@@ -32,6 +32,7 @@ export const COMMANDS: Command[] = [
   { id: "file.open", label: "開く", keys: ["Enter", "Mod+ArrowDown"], run: () => st().openSelected() },
   { id: "file.reveal", label: "Finder / エクスプローラーで表示", keys: ["Mod+Shift+R"], run: () => st().revealSelected() },
   { id: "file.copyPath", label: "パスをコピー", keys: ["Mod+Alt+C"], run: () => st().copyPaths() },
+  { id: "file.removeFromPlace", label: "今のタグ・仮想フォルダから外す", run: () => void st().removeFromPlace() },
   { id: "file.relink", label: "つなぎ直す…", run: () => void st().relinkSelected() },
   { id: "file.forget", label: "記録を外す…", run: () => void st().forgetSelected() },
 
@@ -91,6 +92,14 @@ export const COMMANDS: Command[] = [
     run: () => {
       const p = st().place;
       if (p.kind === "root") void st().removeRoot(p.id);
+    },
+  },
+  {
+    id: "folder.reveal",
+    label: "Finder / エクスプローラーで表示",
+    run: () => {
+      const p = st().place;
+      if (p.kind === "root") st().revealRoot(p.id, p.dir);
     },
   },
   { id: "folder.rescan", label: "読み直す", keys: ["Mod+R"], inFields: true, run: () => void api.rescan() },

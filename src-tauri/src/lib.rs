@@ -120,6 +120,7 @@ pub fn run() {
             add_root,
             inspect_paths,
             remove_root,
+            reveal_root,
             root_organized_count,
             list_files,
             open_files,

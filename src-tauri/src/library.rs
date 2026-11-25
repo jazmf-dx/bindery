@@ -189,6 +189,20 @@ pub fn root_for<'a>(path: &Path, roots: &'a [db::Root]) -> Option<&'a db::Root> 
         .max_by_key(|r| r.path.len())
 }
 
+/// 登録フォルダ `root` の中のフォルダ `dir`（相対、区切りは `/`。空なら `root`）のパス。
+/// 外へ出るもの（`..`・絶対パス・ドライブ名）は None。
+pub fn inside_root(root: &Path, dir: &str) -> Option<PathBuf> {
+    let mut path = root.to_path_buf();
+    for part in dir.split('/').filter(|p| !p.is_empty()) {
+        let mut comps = Path::new(part).components();
+        match (comps.next(), comps.next()) {
+            (Some(std::path::Component::Normal(name)), None) => path.push(name),
+            _ => return None,
+        }
+    }
+    Some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +237,17 @@ mod tests {
         assert!(check_new_root(&a, true, &have_b).is_err());
         assert!(check_new_root(dir.path(), true, &[]).is_ok());
         assert!(check_new_root(&dir.path().join("none"), true, &[]).is_err());
+    }
+
+    #[test]
+    fn a_folder_inside_a_root_cannot_point_outside() {
+        let r = Path::new("/r");
+        assert_eq!(inside_root(r, ""), Some(PathBuf::from("/r")));
+        assert_eq!(inside_root(r, "a/b"), Some(PathBuf::from("/r/a/b")));
+        assert_eq!(inside_root(r, "a/../.."), None);
+        assert_eq!(inside_root(r, ".."), None);
+        assert_eq!(inside_root(r, "/etc"), Some(PathBuf::from("/r/etc")));
+        assert_eq!(inside_root(r, "a/./b"), None);
     }
 
     #[test]

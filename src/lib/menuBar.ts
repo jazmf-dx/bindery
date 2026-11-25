@@ -53,6 +53,7 @@ async function build(): Promise<Menu> {
     submenu("ファイル", [
       item("folder.add"),
       item("folder.rescan"),
+      item("folder.reveal"),
       item("folder.remove"),
       sep(),
       item("vfolder.new"),
@@ -78,6 +79,8 @@ async function build(): Promise<Menu> {
       sep(),
       item("file.reveal"),
       item("file.copyPath"),
+      sep(),
+      item("file.removeFromPlace"),
       sep(),
       item("file.relink"),
       item("file.forget"),

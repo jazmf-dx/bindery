@@ -23,6 +23,17 @@ const BY_EXT: Record<string, Kind> = {
 
 export const kindOf = (ext: string): Kind => BY_EXT[ext] ?? "text";
 
+/** パスの拡張子から種類。扱わないものは null。 */
+export function kindOfPath(path: string): Kind | null {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? (BY_EXT[name.slice(dot + 1).toLowerCase()] ?? null) : null;
+}
+
+/** 種類の名前（条件の選択肢）。 */
+export const KINDS: Kind[] = ["pdf", "word", "excel", "powerpoint", "text"];
+export const kindName = (k: Kind) => LABEL[k];
+
 /** 扱う拡張子（ファイルを選ぶダイアログの絞り込み）。 */
 export const EXTENSIONS = Object.keys(BY_EXT);
 

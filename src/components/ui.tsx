@@ -2,11 +2,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { composing } from "../lib/ime";
 
-export function Section({ title, action, children }: { title?: string; action?: ReactNode; children: ReactNode }) {
+/** サイドバーのまとまり。`drop` を渡すと、見出しがドラッグの落とし先になる（DragLayer.tsx）。 */
+export function Section({ title, action, drop, children }: { title?: string; action?: ReactNode; drop?: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       {title && (
-        <div className="flex items-center px-2 pb-1">
+        <div data-drop={drop} className="flex items-center rounded-md px-2 pb-1 data-[over]:!bg-tonal data-[over]:!text-on-tonal">
           <span className="flex-1 text-[11px] font-semibold text-dim">{title}</span>
           {action}
         </div>

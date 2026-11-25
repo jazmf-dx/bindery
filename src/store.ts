@@ -5,15 +5,18 @@
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { create } from "zustand";
 import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from "./lib/api";
-import { EXTENSIONS } from "./lib/kinds";
+import { EXTENSIONS, kindOfPath } from "./lib/kinds";
 import { warn } from "./lib/log";
-import { loadSort, nextSort, RECENT_SORT, saveSort, visible, type Sort, type SortKey } from "./lib/view";
+import { loadSort, nextSort, NO_FILTERS, RECENT_SORT, saveSort, visible, type Filters, type Sort, type SortKey } from "./lib/view";
 
 export const samePlace = (a: Place, b: Place) =>
   a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null) && ("dir" in a ? a.dir : null) === ("dir" in b ? b.dir : null);
 
-/** 一覧のドラッグ（サイドバーのタグ・仮想フォルダへ落とす）。 */
-export type Drag = { ids: number[]; x: number; y: number; label: string };
+/**
+ * ドラッグ。ファイル（一覧の行）はサイドバーのタグ・仮想フォルダへ、
+ * 仮想フォルダ（サイドバーの行。`folder` がその id）は別の仮想フォルダの下か一番上へ落とす。
+ */
+export type Drag = { ids: number[]; x: number; y: number; label: string; folder?: number };
 
 /** サイドバーで名前を打ち込み中の行。 */
 export type Editing =
@@ -30,6 +33,8 @@ type State = {
   files: FileRow[];
   /** 絞り込みの文字（今の場所の中で絞る。場所を変えても残す）。 */
   query: string;
+  /** 一覧の上の条件（タグ・種類・更新日）。絞り込みと同じく、場所を変えても残す。 */
+  filters: Filters;
   /** 並べ替え（全体で 1 つ覚える）。 */
   sort: Sort;
   /** 「最近の変更」での並べ替え（覚えない。開くたびに気付いた日の新しい順）。 */
@@ -50,6 +55,7 @@ type State = {
   load: () => Promise<void>;
   go: (place: Place) => void;
   setQuery: (query: string) => void;
+  setFilters: (filters: Filters) => void;
   sortBy: (key: SortKey) => void;
   click: (id: number, e: { shift: boolean; toggle: boolean }) => void;
   selectAll: () => void;
@@ -60,8 +66,13 @@ type State = {
   setEditing: (editing: Editing | null) => void;
 
   addRootDialog: () => Promise<void>;
-  /** フォルダを登録する（ダイアログで選んだ・ウィンドウへ落とした）。サブフォルダがあれば、読むか聞く。 */
+  /**
+   * ダイアログで選んだ・ウィンドウへ落としたものを登録する。フォルダはサブフォルダがあれば読むか聞く。
+   * ファイルだけのときは、入っているフォルダを直下だけで登録して、そのファイルを選ぶ（docs/CONCEPT.md「ファイルを落としたとき」）。
+   */
   addRoots: (paths: string[]) => Promise<void>;
+  /** 登録フォルダ（`dir` はその中のフォルダ）を Finder / エクスプローラーで表示する。 */
+  revealRoot: (id: number, dir: string) => void;
   removeRoot: (id: number) => Promise<void>;
 
   openSelected: () => void;
@@ -73,6 +84,8 @@ type State = {
   /** 選んでいる行方不明のファイルの記録を外す（確かめてから）。 */
   forgetSelected: () => Promise<void>;
   setNote: (id: number, note: string) => Promise<void>;
+  /** 選んでいるファイルを、今のタグ・仮想フォルダから外す。 */
+  removeFromPlace: () => Promise<void>;
 
   addTag: (ids: number[], name: string) => Promise<void>;
   setTag: (ids: number[], tagId: number, on: boolean) => Promise<void>;
@@ -83,7 +96,12 @@ type State = {
   renameFolder: (id: number, name: string) => Promise<void>;
   deleteFolder: (id: number) => Promise<void>;
   setFolder: (ids: number[], folderId: number, on: boolean) => Promise<void>;
+  /** 仮想フォルダを別の仮想フォルダの下へ（null は一番上へ）移す。 */
+  moveFolder: (id: number, parentId: number | null) => Promise<void>;
 };
+
+/** 読み込みが終わったら選ぶファイルのパス（落としたファイルの登録）。見つけたら、または読み込みが終わったら空にする。 */
+let pendingSelect: string[] = [];
 
 let loading: Promise<void> | null = null;
 let again = false;
@@ -99,9 +117,9 @@ async function attempt(title: string, f: () => Promise<unknown>) {
 }
 
 /** 今の状態から、一覧に出す行と、まだ見えている選択を作り直す。 */
-function refresh(s: Pick<State, "allFiles" | "query" | "sort" | "recentSort" | "place" | "tags" | "selected">) {
+function refresh(s: Pick<State, "allFiles" | "query" | "filters" | "sort" | "recentSort" | "place" | "tags" | "selected">) {
   const recent = s.place.kind === "recent";
-  const files = visible(s.allFiles, s.query, recent ? s.recentSort : s.sort, recent, s.tags);
+  const files = visible(s.allFiles, s.query, s.filters, recent ? s.recentSort : s.sort, recent, s.tags);
   const still = new Set(files.map((f) => f.id));
   return { files, selected: s.selected.filter((id) => still.has(id)) };
 }
@@ -111,6 +129,7 @@ export const useStore = create<State>((set, get) => ({
   allFiles: [],
   files: [],
   query: "",
+  filters: NO_FILTERS,
   sort: loadSort(),
   recentSort: RECENT_SORT,
   tags: [],
@@ -159,7 +178,20 @@ export const useStore = create<State>((set, get) => ({
             again = true;
             continue;
           }
-          set({ roots, tags, vfolders, missingCount, recentCount, allFiles: files, ...refresh({ ...get(), allFiles: files, tags }) });
+          // 消したタグは条件からも外す
+          const f = get().filters;
+          const filters = f.tags.every((id) => tags.some((t) => t.id === id)) ? f : { ...f, tags: f.tags.filter((id) => tags.some((t) => t.id === id)) };
+          const next = refresh({ ...get(), allFiles: files, tags, filters });
+          // 落としたファイルを登録したあと：見つかったら選ぶ
+          if (pendingSelect.length) {
+            const want = new Set(pendingSelect);
+            const found = next.files.filter((x) => want.has(x.path)).map((x) => x.id);
+            if (found.length) {
+              next.selected = found;
+              pendingSelect = [];
+            }
+          }
+          set({ roots, tags, vfolders, missingCount, recentCount, allFiles: files, filters, ...next, ...(next.selected.length ? { anchor: next.selected[0] } : {}) });
         } catch (e) {
           warn("load", e);
         }
@@ -170,12 +202,14 @@ export const useStore = create<State>((set, get) => ({
   },
 
   go: (place) => {
+    pendingSelect = [];
     // 「最近の変更」は、開くたびに気付いた日の新しい順から
     set({ place, selected: [], anchor: null, ...(place.kind === "recent" ? { recentSort: RECENT_SORT } : {}) });
     get().load();
   },
 
   setQuery: (query) => set({ query, ...refresh({ ...get(), query }) }),
+  setFilters: (filters) => set({ filters, ...refresh({ ...get(), filters }) }),
 
   sortBy: (key) => {
     const s = get();
@@ -240,9 +274,9 @@ export const useStore = create<State>((set, get) => ({
     }
     const dirs = infos.filter((p) => p.isDir);
     const others = infos.length - dirs.length;
-    // ファイルを 1 つずつ足すのはまだできない（docs/CONCEPT.md「まだやっていないこと」）
+    // ファイルだけを落としたとき：ファイルを 1 つずつは足さず、入っているフォルダで代える
     if (dirs.length === 0) {
-      await message("登録できるのはフォルダだけです。ファイルを 1 つずつ足すことは、まだできません。", { title: "ファイルは登録できません", kind: "info" });
+      await addFilesByFolder(infos.map((p) => p.path));
       return;
     }
     // サブフォルダを読むかは、サブフォルダのあるフォルダがあるときだけ聞く。まとめて落としたときは 1 回だけ聞く
@@ -273,6 +307,10 @@ export const useStore = create<State>((set, get) => ({
     if (last !== null) get().go({ kind: "root", id: last, dir: "" });
     else await get().load();
     if (failed.length) await message(failed.join("\n"), { title: last === null ? "フォルダを登録できませんでした" : "一部を登録できませんでした", kind: "warning" });
+  },
+
+  revealRoot: (id, dir) => {
+    api.revealRoot(id, dir).catch((e) => message(String(e), { title: "表示できませんでした", kind: "warning" }));
   },
 
   removeRoot: async (id) => {
@@ -344,6 +382,13 @@ export const useStore = create<State>((set, get) => ({
 
   setNote: (id, note) => attempt("メモを書けませんでした", () => api.setNote(id, note)),
 
+  removeFromPlace: async () => {
+    const { place, selected } = get();
+    if (!selected.length) return;
+    if (place.kind === "tag") await get().setTag(selected, place.id, false);
+    else if (place.kind === "folder") await get().setFolder(selected, place.id, false);
+  },
+
   addTag: (ids, name) => attempt("タグを付けられませんでした", () => api.addTag(ids, name)),
   setTag: (ids, tagId, on) => attempt("タグを変えられませんでした", () => api.setTag(ids, tagId, on)),
   createTag: (name) => attempt("タグを作れませんでした", () => api.createTag(name)),
@@ -386,7 +431,71 @@ export const useStore = create<State>((set, get) => ({
     await attempt("仮想フォルダを消せませんでした", () => api.deleteVFolder(id));
   },
   setFolder: (ids, folderId, on) => attempt("仮想フォルダを変えられませんでした", () => api.setVFolder(ids, folderId, on)),
+  moveFolder: async (id, parentId) => {
+    const v = get().vfolders.find((x) => x.id === id);
+    if (!v || v.parentId === parentId || id === parentId) return;
+    await attempt("仮想フォルダを移せませんでした", () => api.moveVFolder(id, parentId));
+  },
 }));
+
+/** 登録フォルダのうち、そのファイルを読むもの（src-tauri/src/library.rs `root_for` と同じ）と、その中のフォルダ。 */
+export function rootFor(path: string, roots: Root[]): { root: Root; dir: string } | null {
+  const parts = (p: string) => p.split(/[\\/]+/).filter(Boolean);
+  const file = parts(path);
+  let best: { root: Root; dir: string } | null = null;
+  for (const r of roots) {
+    const rp = parts(r.path);
+    const inside = file.length > rp.length && rp.every((x, i) => x === file[i]);
+    if (!inside) continue;
+    const dirs = file.slice(rp.length, -1);
+    if (!r.recursive && dirs.length > 0) continue;
+    if (!best || r.path.length > best.root.path.length) best = { root: r, dir: dirs.join("/") };
+  }
+  return best;
+}
+
+/** パスの入っているフォルダ。 */
+const parentOf = (path: string) => path.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "");
+
+/**
+ * 落としたファイル（フォルダなし）：入っているフォルダが登録済みならそこを開いて選ぶ。
+ * まだなら、入っているフォルダを直下だけで登録してよいか聞き、登録して選ぶ（docs/CONCEPT.md「ファイルを落としたとき」）。
+ */
+async function addFilesByFolder(paths: string[]) {
+  const st = useStore.getState();
+  const files = paths.filter((p) => kindOfPath(p) !== null);
+  if (files.length === 0) {
+    await message("扱えるのは PDF・オフィス文書・テキストです。", { title: "このファイルは扱えません", kind: "info" });
+    return;
+  }
+  const known = files.map((p) => ({ path: p, at: rootFor(p, st.roots) }));
+  const fresh = [...new Set(known.filter((k) => !k.at).map((k) => parentOf(k.path)))];
+  let last: { id: number; dir: string } | null = null;
+  const at = known.find((k) => k.at)?.at;
+  if (at) last = { id: at.root.id, dir: at.dir };
+  if (fresh.length > 0) {
+    const what = fresh.length === 1 ? `「${baseName(fresh[0])}」` : `${fresh.length} 個のフォルダ`;
+    const yes = "フォルダを登録";
+    const answer = await message(
+      `ファイルを 1 つずつ足すことはできません。入っている${what}を、そのフォルダだけ（サブフォルダは読まない）で登録して、ファイルを選びますか？\nファイルは元の場所に置いたままです。`,
+      { title: "入っているフォルダを登録しますか？", kind: "info", buttons: { ok: yes, cancel: "やめる" } },
+    );
+    if (answer !== yes && answer !== "Ok") return;
+    const failed: string[] = [];
+    for (const dir of fresh) {
+      try {
+        last = { id: (await api.addRoot(dir, false)).id, dir: "" };
+      } catch (e) {
+        failed.push(fresh.length > 1 ? `${baseName(dir)}：${String(e)}` : String(e));
+      }
+    }
+    if (failed.length) await message(failed.join("\n"), { title: "フォルダを登録できませんでした", kind: "warning" });
+  }
+  if (!last) return;
+  st.go({ kind: "root", id: last.id, dir: last.dir });
+  // 読み込みが終わって一覧に出たら選ぶ（ほかの場所へ移ったらやめる）
+  pendingSelect = files;
+}
 
 /** パスの最後の名前。 */
 export const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;

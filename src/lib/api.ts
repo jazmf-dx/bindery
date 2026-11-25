@@ -80,6 +80,8 @@ export const api = {
   inspectPaths: (paths: string[]) => invoke<PathInfo[]>("inspect_paths", { paths }),
   /** 登録を外す。アプリのデータの行だけを消し、元のファイルには触らない。 */
   removeRoot: (id: number) => invoke<void>("remove_root", { id }),
+  /** 登録フォルダ（`dir` はその中のフォルダ。空なら登録フォルダそのもの）を Finder / エクスプローラーで表示する。 */
+  revealRoot: (id: number, dir: string) => invoke<void>("reveal_root", { id, dir }),
   /** タグか仮想フォルダが付いたファイルの数（登録を外す前の確認用）。 */
   rootOrganizedCount: (id: number) => invoke<number>("root_organized_count", { id }),
   listFiles: (place: Place) => invoke<FileRow[]>("list_files", { place }),
