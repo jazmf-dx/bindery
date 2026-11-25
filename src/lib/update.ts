@@ -17,11 +17,11 @@ import { warn } from "./log";
 export const APP_NAME = "Bindery";
 
 /**
- * アプリ内の更新を使うか。0.1.0 は署名鍵がまだ無いので、更新ファイルを作らずに出す
- * （tauri.conf.json の `createUpdaterArtifacts: false`、decisions/project-context.md「逸脱」）。
- * 鍵を入れたら true に戻し、`createUpdaterArtifacts` も戻す。
+ * アプリ内の更新を使うか。0.2.0 から使う（Bindery の署名鍵を作った。decisions/project-context.md「updater の鍵」）。
+ * 0.1.0 は鍵が無く false で出したので、0.1.0 から 0.2.0 へは手で入れ直す。
+ * false にするときは tauri.conf.json の `createUpdaterArtifacts` も false にする。
  */
-export const UPDATES = false;
+export const UPDATES = true;
 
 const isMac = navigator.userAgent.includes("Mac");
 

@@ -3,7 +3,7 @@
 AI と人が実装前に確認する **現在の前提**。機能要件、ロードマップ、画面仕様は `docs/` に置き、ここには書かない。
 変更したら日付を更新する。変更の理由を将来説明する価値がある場合だけ、別の ADR を残す。
 
-**更新日**：2026-11-23
+**更新日**：2026-11-26
 
 | 項目 | 現在の前提 |
 |---|---|
@@ -13,7 +13,7 @@ AI と人が実装前に確認する **現在の前提**。機能要件、ロー
 | 外との接続 | なし（ブラウザ拡張・MCP・待ち受けポートは持たない） |
 | 配布の形 | 単独リポジトリ（tag `v*`、feed `https://github.com/jazmf-dx/bindery/releases/latest/download/latest.json`） |
 | 識別子 | `com.local.bindery`、`productName` は `Bindery`（一度配布したら変えない） |
-| updater の鍵 | **一時的な鍵**（Typecase と同じ扱い）。公開鍵だけを `tauri.conf.json` に入れ、秘密鍵は保存していない。この鍵では更新ファイルに署名できないので、0.1.0 は更新ファイルを作らずに出す（下の「逸脱」）。owner（jazmf-dx）の鍵に替え、Secrets を設定したら戻す（desktop-platform playbook/updater-key.md） |
+| updater の鍵 | **Bindery の鍵**（2026-11-26 に作った）。公開鍵は `tauri.conf.json`、秘密鍵とパスワードはリポジトリの Secrets（`TAURI_SIGNING_PRIVATE_KEY`・`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）と、作った人の手元の控え。秘密鍵を無くすと、入っている版へ更新を届けられなくなる（desktop-platform playbook/updater-key.md）。0.1.0 は一時的な鍵で、更新ファイルを作らずに出した |
 | アイコン | `app-icon.svg`（色の束：3 色の書類を白い背でまとめる）。`bunx tauri icon app-icon.svg` で `src-tauri/icons/` を作る |
 | desktop-base | 未採用（まだ無い）。stockroom の `eadf712` から土台を写した（desktop-platform playbook/new-tool.md「desktop-base がまだ無いとき」） |
 
@@ -36,7 +36,6 @@ AI と人が実装前に確認する **現在の前提**。機能要件、ロー
 
 ## 逸脱
 
-- **0.1.0 はアプリ内アップデートを使わない**（desktop-platform Distribution §4「配布するツールは必ず updater を入れる」から。人の判断、2026-11-23）。署名鍵がまだ無いため。
-  `tauri.conf.json` の `createUpdaterArtifacts` を `false`、`src/lib/update.ts` の `UPDATES` を `false` にし、起動時の確認とメニューの［アップデートを確認］を出さない。
-  updater のプラグインと `pubkey`・`endpoints` はそのまま。鍵を入れた版で両方を戻す。0.1.0 を入れた人は、その版を手で入れ直す必要がある
+- **0.1.0 だけアプリ内アップデートを使わなかった**（desktop-platform Distribution §4「配布するツールは必ず updater を入れる」から。人の判断、2026-11-23）。署名鍵がまだ無かったため。
+  0.2.0 で Bindery の鍵を作り、`createUpdaterArtifacts` と `UPDATES` を `true` に戻した（2026-11-26）。0.1.0 を入れた端末は、0.2.0 を 1 回だけ手で入れ直す
 - 最初のコミットだけ、空のリポジトリだったので main に直接 push した（PR の土台が無かったため。人の判断）
