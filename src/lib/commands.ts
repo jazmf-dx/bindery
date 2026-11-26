@@ -4,12 +4,13 @@
  *
  * キーは "Mod+Shift+R" のように書く。Mod は macOS では ⌘、ほかでは Ctrl。
  */
-import { applyAppearance, nextAppearance, type Appearance } from "./appearance";
+import { appearanceLabel, nextAppearance, type Appearance } from "./appearance";
 import { api } from "./api";
 import { composing } from "./ime";
 import { warn } from "./log";
 import { checkForUpdate } from "./update";
 import { useStore } from "../store";
+import { useShortcutHelp } from "../components/ShortcutHelp";
 
 export type Command = {
   id: string;
@@ -19,8 +20,6 @@ export type Command = {
   inFields?: boolean;
   run: () => void;
 };
-
-let appearance: Appearance = "system";
 
 /** 絞り込みの入力欄の id。 */
 export const SEARCH_FIELD = "bindery-search";
@@ -119,15 +118,21 @@ export const COMMANDS: Command[] = [
   { id: "view.details", label: "詳細パネルを表示／隠す", keys: ["Mod+Alt+I"], inFields: true, run: () => st().toggleDetails() },
 
   // 表示・ヘルプ
+  // 外観（stockroom と同じ：ツールバーのボタンと ⌘⇧D はシステム → ライト → ダークの順に回す）
   {
     id: "view.appearance",
     label: "外観を切り替える",
-    keys: ["Mod+Shift+L"],
+    keys: ["Mod+Shift+D"],
     inFields: true,
-    run: () => {
-      appearance = nextAppearance(appearance);
-      applyAppearance(appearance);
-    },
+    run: () => st().setAppearance(nextAppearance(st().appearance)),
+  },
+  ...(["system", "light", "dark"] as Appearance[]).map((a) => ({ id: `view.appearance.${a}`, label: appearanceLabel(a), run: () => st().setAppearance(a) })),
+  {
+    id: "help.shortcuts",
+    label: "キーボードショートカット",
+    // ? は打った文字で受ける（キーボードの配列によらない。ShortcutHelp.tsx）。ここでは一覧と表示のためだけ
+    keys: ["?"],
+    run: () => useShortcutHelp.getState().setOpen(true),
   },
   { id: "help.update", label: "アップデートを確認…", run: () => checkForUpdate(true) },
   { id: "help.log", label: "ログを表示", run: () => api.revealLog().catch((e) => warn("reveal log", e)) },

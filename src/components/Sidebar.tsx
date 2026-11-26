@@ -6,7 +6,7 @@
  * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Keyboard, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
 import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
 import { command, runCommand } from "../lib/commands";
 import { openMenu, type Entry } from "../lib/contextMenu";
@@ -26,75 +26,87 @@ export function Sidebar() {
   const createFolder = useStore((s) => s.createFolder);
 
   return (
-    <nav className="vibrant flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-panel px-2 pb-3" {...dragRegion(true)}>
-      <div className="h-[var(--titlebar)] shrink-0" />
-      <Section>
-        <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />
-        <PlaceRow
-          place={{ kind: "recent" }}
-          icon={<History size={15} />}
-          label="最近の変更"
-          title="この 7 日のあいだに中身が変わったファイルと、増えたファイル"
-          count={recentCount || undefined}
-        />
-        <PlaceRow place={{ kind: "unsorted" }} icon={<Inbox size={15} />} label="未整理" />
-        <PlaceRow place={{ kind: "missing" }} icon={<HelpCircle size={15} />} label="行方不明" count={missingCount || undefined} />
-      </Section>
-
-      <Section
-        title="仮想フォルダ"
-        drop="folder:top"
-        action={
-          <button aria-label="新しい仮想フォルダ" title="新しい仮想フォルダ" className="ghost rounded p-0.5 text-dim" onClick={() => setEditing({ kind: "newFolder", parentId: null })}>
-            <Plus size={13} />
-          </button>
-        }
-      >
-        <FolderTree parentId={null} depth={0} vfolders={vfolders} />
-        {editing?.kind === "newFolder" && editing.parentId === null && (
-          <NewRow
-            icon={<Folder size={15} />}
-            placeholder="仮想フォルダの名前"
-            onDone={(name) => {
-              setEditing(null);
-              if (name) void createFolder(name, null);
-            }}
+    <aside className="vibrant flex w-full shrink-0 flex-col border-r border-line bg-panel">
+      {/* macOS：ウィンドウのボタンの行（ウィンドウを動かせる） */}
+      <div className="h-[var(--titlebar)] shrink-0" {...dragRegion()} />
+      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 pt-2 pb-3" {...dragRegion(true)}>
+        <Section>
+          <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />
+          <PlaceRow
+            place={{ kind: "recent" }}
+            icon={<History size={15} />}
+            label="最近の変更"
+            title="この 7 日のあいだに中身が変わったファイルと、増えたファイル"
+            count={recentCount || undefined}
           />
-        )}
-        {vfolders.length === 0 && editing?.kind !== "newFolder" && <Empty text="＋で作れます" />}
-      </Section>
-
-      <Section
-        title="タグ"
-        action={
-          <button aria-label="新しいタグ" title="新しいタグ" className="ghost rounded p-0.5 text-dim" onClick={() => setEditing({ kind: "newTag" })}>
-            <Plus size={13} />
-          </button>
-        }
+          <PlaceRow place={{ kind: "unsorted" }} icon={<Inbox size={15} />} label="未整理" />
+          <PlaceRow place={{ kind: "missing" }} icon={<HelpCircle size={15} />} label="行方不明" count={missingCount || undefined} />
+        </Section>
+  
+        <Section
+          title="仮想フォルダ"
+          drop="folder:top"
+          action={
+            <button aria-label="新しい仮想フォルダ" title="新しい仮想フォルダ" className="ghost rounded p-0.5 text-dim" onClick={() => setEditing({ kind: "newFolder", parentId: null })}>
+              <Plus size={13} />
+            </button>
+          }
+        >
+          <FolderTree parentId={null} depth={0} vfolders={vfolders} />
+          {editing?.kind === "newFolder" && editing.parentId === null && (
+            <NewRow
+              icon={<Folder size={15} />}
+              placeholder="仮想フォルダの名前"
+              onDone={(name) => {
+                setEditing(null);
+                if (name) void createFolder(name, null);
+              }}
+            />
+          )}
+          {vfolders.length === 0 && editing?.kind !== "newFolder" && <Empty text="＋で作れます" />}
+        </Section>
+  
+        <Section
+          title="タグ"
+          action={
+            <button aria-label="新しいタグ" title="新しいタグ" className="ghost rounded p-0.5 text-dim" onClick={() => setEditing({ kind: "newTag" })}>
+              <Plus size={13} />
+            </button>
+          }
+        >
+          {tags.map((t) => (
+            <TagRow key={t.id} tag={t} />
+          ))}
+          {editing?.kind === "newTag" && (
+            <NewRow
+              icon={<TagIcon size={15} />}
+              placeholder="タグの名前"
+              onDone={(name) => {
+                setEditing(null);
+                if (name) void createTag(name);
+              }}
+            />
+          )}
+          {tags.length === 0 && editing?.kind !== "newTag" && <Empty text="詳細パネルか＋で作れます" />}
+        </Section>
+  
+        <Section title="登録フォルダ">
+          {roots.map((r) => (
+            <RootRow key={r.id} root={r} />
+          ))}
+          <Row icon={<FolderPlus size={15} />} label="フォルダを登録…" dim onClick={() => runCommand("folder.add")} />
+        </Section>
+      </nav>
+      {/* stockroom と同じく、下の端にショートカットの一覧への入り口 */}
+      <button
+        onClick={() => runCommand("help.shortcuts")}
+        className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-2 text-[12px] text-dim hover:bg-ink/5 hover:text-fg"
       >
-        {tags.map((t) => (
-          <TagRow key={t.id} tag={t} />
-        ))}
-        {editing?.kind === "newTag" && (
-          <NewRow
-            icon={<TagIcon size={15} />}
-            placeholder="タグの名前"
-            onDone={(name) => {
-              setEditing(null);
-              if (name) void createTag(name);
-            }}
-          />
-        )}
-        {tags.length === 0 && editing?.kind !== "newTag" && <Empty text="詳細パネルか＋で作れます" />}
-      </Section>
-
-      <Section title="登録フォルダ">
-        {roots.map((r) => (
-          <RootRow key={r.id} root={r} />
-        ))}
-        <Row icon={<FolderPlus size={15} />} label="フォルダを登録…" dim onClick={() => runCommand("folder.add")} />
-      </Section>
-    </nav>
+        <Keyboard size={14} />
+        ショートカット一覧
+        <span className="ml-auto">?</span>
+      </button>
+    </aside>
   );
 }
 

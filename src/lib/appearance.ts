@@ -1,6 +1,6 @@
 /**
  * Appearance (ライト／ダーク): "system" follows the OS,
- * "light" / "dark" are the user's choice (the settings screen, when there is one). The page's
+ * "light" / "dark" are the user's choice (the toolbar's button, the 表示 menu, ⌘⇧D). The page's
  * colours key off `<html data-theme="light|dark">` (index.css), which is always
  * the resolved theme. The window's theme is set as well, so native parts
  * (scroll bars, form controls, the title bar) match.
@@ -15,8 +15,8 @@ const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 export const parseAppearance = (v: unknown): Appearance => (v === "light" || v === "dark" ? v : "system");
 
-/** The choice last applied, kept so the first paint isn't the wrong theme. */
-function cached(): Appearance {
+/** The choice last applied (this device remembers it; there is no settings screen yet). */
+export function cachedAppearance(): Appearance {
   try {
     return parseAppearance(localStorage.getItem(CACHE_KEY));
   } catch {
@@ -59,9 +59,9 @@ export function applyAppearance(a: Appearance) {
   paint();
 }
 
-/** At launch, before the first render: the cached choice (the saved one arrives with the settings). */
+/** At launch, before the first render. */
 export function setUpAppearance() {
-  applyAppearance(cached());
+  applyAppearance(cachedAppearance());
 }
 
 export const APPEARANCES: { key: Appearance; label: string }[] = [

@@ -5,6 +5,7 @@
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { create } from "zustand";
 import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from "./lib/api";
+import { applyAppearance, cachedAppearance, type Appearance } from "./lib/appearance";
 import { EXTENSIONS, kindOfPath } from "./lib/kinds";
 import { warn } from "./lib/log";
 import {
@@ -81,6 +82,8 @@ type State = {
   prefs: Prefs;
   /** グリッドの 1 行の数（グリッドが幅から決める。上下の矢印で動く数）。 */
   gridCols: number;
+  /** 外観（システムに合わせる・ライト・ダーク）。この端末で覚える（lib/appearance.ts）。 */
+  appearance: Appearance;
 
   load: () => Promise<void>;
   go: (place: Place) => void;
@@ -95,6 +98,7 @@ type State = {
   toggleDetails: () => void;
   setPanelWidth: (panel: Panel, px: number) => void;
   setGridCols: (n: number) => void;
+  setAppearance: (appearance: Appearance) => void;
   click: (id: number, e: { shift: boolean; toggle: boolean }) => void;
   /** 一覧のフォルダの行を選ぶ。 */
   focusDir: (path: string) => void;
@@ -199,6 +203,7 @@ export const useStore = create<State>((set, get) => ({
   editing: null,
   prefs: loadPrefs(),
   gridCols: 1,
+  appearance: cachedAppearance(),
 
   // 読み直しが重なったら、終わったあとに 1 回だけもう一度読む（届いた知らせを取りこぼさない）。
   load: () => {
@@ -313,6 +318,10 @@ export const useStore = create<State>((set, get) => ({
   toggleSidebar: () => setPrefs({ sidebarOpen: !get().prefs.sidebarOpen }),
   toggleDetails: () => setPrefs({ detailsOpen: !get().prefs.detailsOpen }),
   setPanelWidth: (panel, px) => setPrefs(panel === "sidebar" ? { sidebarWidth: clampWidth(panel, px) } : { detailsWidth: clampWidth(panel, px) }),
+  setAppearance: (appearance) => {
+    applyAppearance(appearance);
+    set({ appearance });
+  },
   setGridCols: (gridCols) => {
     if (get().gridCols !== gridCols) set({ gridCols });
   },
