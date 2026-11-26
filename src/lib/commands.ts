@@ -102,6 +102,7 @@ export const COMMANDS: Command[] = [
       if (p.kind === "root") st().revealRoot(p.id, p.dir);
     },
   },
+  { id: "folder.up", label: "上のフォルダへ", keys: ["Mod+ArrowUp"], run: () => st().goUp() },
   { id: "folder.rescan", label: "読み直す", keys: ["Mod+R"], inFields: true, run: () => void api.rescan() },
 
   // 表示・ヘルプ
