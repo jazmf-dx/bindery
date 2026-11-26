@@ -1,14 +1,13 @@
 /**
  * 一覧の上のツールバー（docs/CONCEPT.md「ツールバーと表示の切り替え」）。Stockroom と同じ 2 段。
- * サイドバーを隠したときは、macOS のウィンドウのボタンの分だけ左を空ける。
+ * サイドバーを隠したときは、開くボタンを左端に出し、macOS のウィンドウのボタンの分だけ左を空ける。
  */
 import { useRef, useState } from "react";
-import { ArrowDownWideNarrow, ArrowUpDown, ArrowUpNarrowWide, ChevronDown, LayoutGrid, LayoutList, Monitor, Moon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, Search, SlidersHorizontal, Sun, X } from "lucide-react";
-import { appearanceLabel, nextAppearance } from "../lib/appearance";
+import { ArrowDownWideNarrow, ArrowUpDown, ArrowUpNarrowWide, ChevronDown, LayoutGrid, LayoutList, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import { keyLabel, runCommand, SEARCH_FIELD } from "../lib/commands";
 import { composing } from "../lib/ime";
 import { dragRegion } from "../lib/titleBar";
-import { COLUMNS, hasFilters, SORT_KEYS, type Column, type Layout, type SortKey } from "../lib/view";
+import { COLUMNS, DENSITIES, hasFilters, SORT_KEYS, type Column, type Density, type Layout, type SortKey } from "../lib/view";
 import { folderPath, useStore } from "../store";
 import { FilterRow } from "./FilterRow";
 import { MenuHeading, MenuOption, Popover } from "./ui";
@@ -82,7 +81,7 @@ function Count() {
 const iconButton = "ghost flex h-8 w-8 shrink-0 items-center justify-center rounded-md";
 
 /**
- * stockroom の Toolbar.tsx と同じ形：上の行に サイドバーの開け閉め・場所の名前と件数・絞り込み・読み直す・外観・詳細パネルの開け閉め、
+ * stockroom の Toolbar.tsx と同じ形：上の行に（サイドバーを隠しているときは開くボタン）・場所の名前と件数・絞り込み・読み直す・詳細パネルの開け閉め、
  * 下の帯（FilterRow.tsx）に条件と、右端に並び順・一覧の形・表示のメニュー。
  */
 export function Toolbar() {
@@ -97,14 +96,17 @@ export function Toolbar() {
       {...dragRegion(true)}
     >
       <div className="flex h-8 items-center gap-2">
-        <button
-          className={`${iconButton} -ml-1 ${sidebarOpen ? "text-dim" : "text-accent"}`}
-          title={`サイドバーを${sidebarOpen ? "隠す" : "表示"}（${keyLabel("view.sidebar")}）`}
-          aria-label={`サイドバーを${sidebarOpen ? "隠す" : "表示"}`}
-          onClick={() => runCommand("view.sidebar")}
-        >
-          {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-        </button>
+        {/* 隠すボタンはサイドバーの上端にある（Sidebar.tsx）。閉じているあいだだけ、開くボタンをここに出す（stockroom と同じ） */}
+        {!sidebarOpen && (
+          <button
+            className={`${iconButton} -ml-1 text-accent`}
+            title={`サイドバーを表示（${keyLabel("view.sidebar")}）`}
+            aria-label="サイドバーを表示"
+            onClick={() => runCommand("view.sidebar")}
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
         <h1 className="flex min-w-0 items-baseline gap-2 text-[15px]">
           <Title />
           <Count />
@@ -113,7 +115,7 @@ export function Toolbar() {
         <SearchField />
         {/* 読み込み中の印と［読み直す］は同じ場所に置き、幅も同じにする */}
         <button
-          className="ghost flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-dim @max-2xl:w-8 @max-2xl:justify-center @max-2xl:px-0 @2xl:w-[6.5rem] @2xl:justify-end"
+          className="ghost flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-dim @max-2xl:w-8 @max-2xl:justify-center @max-2xl:px-0 @2xl:w-[7.5rem] @2xl:justify-end whitespace-nowrap"
           onClick={() => runCommand("folder.rescan")}
           disabled={scanning}
           title={`読み直す（${keyLabel("folder.rescan")}）`}
@@ -121,7 +123,6 @@ export function Toolbar() {
           <RefreshCw size={14} className={scanning ? "animate-spin" : ""} />
           <span className="@max-2xl:hidden">{scanning ? "読み込み中…" : "読み直す"}</span>
         </button>
-        <ThemeToggle />
         <button
           className={`${iconButton} ${detailsOpen ? "text-dim" : "text-accent"}`}
           title={`詳細パネルを${detailsOpen ? "隠す" : "表示"}（${keyLabel("view.details")}）`}
@@ -171,22 +172,6 @@ function SearchField() {
         <X size={12} />
       </button>
     </label>
-  );
-}
-
-/** 外観を 1 回で切り替える（stockroom と同じ：システム → ライト → ダーク）。アイコンは今の選択。 */
-function ThemeToggle() {
-  const current = useStore((s) => s.appearance);
-  const next = nextAppearance(current);
-  return (
-    <button
-      className={`${iconButton} text-dim`}
-      title={`外観：${appearanceLabel(current)}（クリックで「${appearanceLabel(next)}」。${keyLabel("view.appearance")}）`}
-      aria-label={`外観を「${appearanceLabel(next)}」にする`}
-      onClick={() => runCommand("view.appearance")}
-    >
-      {current === "system" ? <Monitor size={16} /> : current === "light" ? <Sun size={16} /> : <Moon size={16} />}
-    </button>
   );
 }
 
@@ -267,20 +252,21 @@ function DisplayControls() {
   );
 }
 
-/** 表示のメニュー：リストの列の出し入れ。 */
+/** 表示のメニュー：リストの見た目（行の高さ・線・1 行おきの色）と、列の出し入れ。グリッドのときは押せない。 */
 function DisplayMenu() {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const recent = useStore((s) => s.place.kind === "recent");
-  const layout = useStore((s) => s.prefs.layout);
-  const columns = useStore((s) => s.prefs.columns);
+  const grid = useStore((s) => s.prefs.layout === "grid");
+  const prefs = useStore((s) => s.prefs);
   const toggleColumn = useStore((s) => s.toggleColumn);
+  const setListLook = useStore((s) => s.setListLook);
   return (
     <>
       <button
         ref={button}
         className={`ghost flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${open ? "bg-press" : ""}`}
-        title="表示（リストの列）"
+        title="表示（リストの見た目と列）"
         aria-label="表示の設定"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -288,13 +274,34 @@ function DisplayMenu() {
         <SlidersHorizontal size={15} />
       </button>
       {open && (
-        <Popover anchor={button.current} onClose={() => setOpen(false)} width="w-52">
-          <MenuHeading>リストの列{layout === "grid" ? "（リストのとき）" : ""}</MenuHeading>
+        <Popover anchor={button.current} onClose={() => setOpen(false)} width="w-60">
+          {grid && <div className="px-2 pt-1.5 pb-1 text-[11px] text-dim">リストにしたときの見た目です</div>}
+          <MenuHeading>行の高さ</MenuHeading>
+          <div role="group" aria-label="行の高さ" className="mx-1 mb-1 flex gap-0.5 rounded-md track">
+            {DENSITIES.map((d) => (
+              <button
+                key={d}
+                aria-pressed={prefs.density === d}
+                onClick={() => setListLook({ density: d })}
+                className={`flex-1 rounded py-0.5 ${prefs.density === d ? "thumb" : "text-fg/85 hover:bg-hover"}`}
+              >
+                {DENSITY_LABEL[d]}
+              </button>
+            ))}
+          </div>
+          <MenuOption on={prefs.rowLines} onClick={() => setListLook({ rowLines: !prefs.rowLines })}>
+            行を線で区切る
+          </MenuOption>
+          <MenuOption on={prefs.stripes} onClick={() => setListLook({ stripes: !prefs.stripes })}>
+            1 行おきに色を付ける
+          </MenuOption>
+          <div className="my-1 h-px bg-line" />
+          <MenuHeading>列</MenuHeading>
           <MenuOption on disabled onClick={() => {}}>
             名前
           </MenuOption>
           {COLUMNS.map((c) => (
-            <MenuOption key={c} on={columns.includes(c)} onClick={() => toggleColumn(c)}>
+            <MenuOption key={c} on={prefs.columns.includes(c)} onClick={() => toggleColumn(c)}>
               {c === "date" && recent ? "気付いた日" : COLUMN_LABEL[c]}
             </MenuOption>
           ))}
@@ -303,3 +310,5 @@ function DisplayMenu() {
     </>
   );
 }
+
+const DENSITY_LABEL: Record<Density, string> = { compact: "詰める", normal: "標準", relaxed: "ゆったり" };

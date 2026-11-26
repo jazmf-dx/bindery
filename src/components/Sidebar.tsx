@@ -6,9 +6,10 @@
  * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Keyboard, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Keyboard, Layers, Monitor, Moon, PanelLeftClose, Plus, Sun, Tag as TagIcon, X } from "lucide-react";
+import { APPEARANCES } from "../lib/appearance";
 import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
-import { command, runCommand } from "../lib/commands";
+import { command, keyLabel, runCommand } from "../lib/commands";
 import { openMenu, type Entry } from "../lib/contextMenu";
 import { dragRegion } from "../lib/titleBar";
 import { samePlace, useStore } from "../store";
@@ -27,11 +28,19 @@ export function Sidebar() {
 
   return (
     <aside className="vibrant flex w-full shrink-0 flex-col border-r border-line bg-panel">
-      {/* macOS：ウィンドウのボタンの行（ウィンドウを動かせる） */}
-      <div className="h-[var(--titlebar)] shrink-0" {...dragRegion()} />
+      {/* macOS：ウィンドウのボタンの行（ウィンドウを動かせる）。サイドバーを隠すボタンはこの帯の右端（stockroom と同じ） */}
+      <div className="flex h-[var(--titlebar)] shrink-0 items-center justify-end px-2" {...dragRegion()}>
+        <SidebarHide className="sidebar-hide-top" />
+      </div>
       <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 pt-2 pb-3" {...dragRegion(true)}>
         <Section>
-          <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />
+          {/* 帯が無いとき（Windows・全画面）は、隠すボタンを最初の行の右に置く */}
+          <div className="flex items-center gap-1">
+            <div className="min-w-0 flex-1">
+              <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />
+            </div>
+            <SidebarHide className="sidebar-hide-row" />
+          </div>
           <PlaceRow
             place={{ kind: "recent" }}
             icon={<History size={15} />}
@@ -97,7 +106,8 @@ export function Sidebar() {
           <Row icon={<FolderPlus size={15} />} label="フォルダを登録…" dim onClick={() => runCommand("folder.add")} />
         </Section>
       </nav>
-      {/* stockroom と同じく、下の端にショートカットの一覧への入り口 */}
+      {/* stockroom と同じく、下の端に外観とショートカットの一覧 */}
+      <AppearanceRow />
       <button
         onClick={() => runCommand("help.shortcuts")}
         className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-2 text-[12px] text-dim hover:bg-ink/5 hover:text-fg"
@@ -128,6 +138,52 @@ type RowProps = {
   menu?: () => Entry[];
   trailing?: ReactNode;
 };
+
+/** サイドバーを隠すボタン。開くボタンはツールバーの左端（閉じているときだけ出る。Toolbar.tsx）。 */
+function SidebarHide({ className }: { className: string }) {
+  return (
+    <button
+      title={`サイドバーを隠す（${keyLabel("view.sidebar")}）`}
+      aria-label="サイドバーを隠す"
+      onClick={() => runCommand("view.sidebar")}
+      className={`${className} ghost h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim`}
+    >
+      <PanelLeftClose size={16} />
+    </button>
+  );
+}
+
+/**
+ * 外観（システム／ライト／ダーク）。アプリ全体の設定なので、ショートカット一覧と並べてサイドバーの下端に置く
+ * （stockroom の AppearanceRow と同じ）。3 つ並べて、いまどれかを見せる。
+ */
+function AppearanceRow() {
+  const current = useStore((s) => s.appearance);
+  const setAppearance = useStore((s) => s.setAppearance);
+  const icon = { system: <Monitor size={13} />, light: <Sun size={13} />, dark: <Moon size={13} /> };
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-1.5 text-[12px] text-dim">
+      外観
+      <div role="group" aria-label="外観" className="ml-auto flex h-6 items-stretch rounded-md track">
+        {APPEARANCES.map((a) => {
+          const on = a.key === current;
+          return (
+            <button
+              key={a.key}
+              aria-pressed={on}
+              title={`${a.label}（${keyLabel("view.appearance")} で次へ）`}
+              aria-label={a.label}
+              onClick={() => setAppearance(a.key)}
+              className={`flex w-7 items-center justify-center rounded ${on ? "thumb" : "text-fg/85 hover:bg-hover hover:text-fg"}`}
+            >
+              {icon[a.key]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function Row({ icon, label, count, title, active, dim, depth = 0, drop, twisty, onClick, onDoubleClick, onMouseDown, menu, trailing }: RowProps) {
   return (

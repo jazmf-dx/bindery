@@ -94,6 +94,8 @@ type State = {
   setSort: (sort: Sort) => void;
   setLayout: (layout: Layout) => void;
   toggleColumn: (column: Column) => void;
+  /** リストの見た目（行の高さ・線・1 行おきの色）を変える。 */
+  setListLook: (look: Partial<Pick<Prefs, "density" | "rowLines" | "stripes">>) => void;
   toggleSidebar: () => void;
   toggleDetails: () => void;
   setPanelWidth: (panel: Panel, px: number) => void;
@@ -315,6 +317,7 @@ export const useStore = create<State>((set, get) => ({
     // 列の並びはいつも同じ（足した順にしない）
     setPrefs({ columns: COLUMNS.filter((c) => (c === column ? !columns.includes(c) : columns.includes(c))) });
   },
+  setListLook: (look) => setPrefs(look),
   toggleSidebar: () => setPrefs({ sidebarOpen: !get().prefs.sidebarOpen }),
   toggleDetails: () => setPrefs({ detailsOpen: !get().prefs.detailsOpen }),
   setPanelWidth: (panel, px) => setPrefs(panel === "sidebar" ? { sidebarWidth: clampWidth(panel, px) } : { detailsWidth: clampWidth(panel, px) }),
