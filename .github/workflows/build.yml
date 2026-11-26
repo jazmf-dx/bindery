@@ -54,9 +54,9 @@ jobs:
 
   # Runs alongside `test` rather than after it. A tag build only creates a
   # draft release, so a failing test still stops it from being published.
-  # Bindery: tags and manual runs only. 0.1.0 makes no updater artifacts
-  # (no signing key yet, decisions/project-context.md), so the signing
-  # secrets below may be empty; put them back to use when the key is set.
+  # Bindery: tags and manual runs only. From 0.2.0 the updater artifacts are
+  # signed with Bindery's own key (decisions/project-context.md), so the
+  # signing secrets below must be set or the build fails.
   build:
     if: "github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'"
     # Needed to create the GitHub Release and upload installers to it.
