@@ -23,7 +23,7 @@ import type { FileRow, Root } from "../lib/api";
 import { runCommand } from "../lib/commands";
 import { cmd, openMenu, type Entry } from "../lib/contextMenu";
 import { formatDate, formatSize, kindLabel, relativeDir } from "../lib/kinds";
-import { hasFilters, type Column, type SortKey, type SubDir } from "../lib/view";
+import { hasFilters, ROW_HEIGHT, type Column, type SortKey, type SubDir } from "../lib/view";
 import { folderPath, useStore } from "../store";
 import { FileGrid } from "./FileGrid";
 import { FolderIcon, KindIcon } from "./KindIcon";
@@ -31,7 +31,6 @@ import { rootMenu } from "./Sidebar";
 import { COLUMN_LABEL } from "./Toolbar";
 
 const isMac = navigator.userAgent.includes("Mac");
-const ROW_H = 28;
 
 /** 列の幅。名前の列はいつも先頭に出す。 */
 const WIDTH: Record<"name" | Column, string> = {
@@ -104,9 +103,20 @@ function ListView({ empty }: { empty: boolean }) {
   const place = useStore((s) => s.place);
   const selected = useStore((s) => s.selected);
   const { columns, template } = useColumns();
+  const density = useStore((s) => s.prefs.density);
+  const rowLines = useStore((s) => s.prefs.rowLines);
+  const stripes = useStore((s) => s.prefs.stripes);
+  const height = ROW_HEIGHT[density];
   const scroller = useRef<HTMLDivElement>(null);
   // 行は、先頭のフォルダの行に続けてファイルの行
-  const v = useVirtualizer({ count: subdirs.length + files.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
+  const v = useVirtualizer({ count: subdirs.length + files.length, getScrollElement: () => scroller.current, estimateSize: () => height, overscan: 12 });
+  // 行の高さを変えたら、並べ直す
+  useEffect(() => {
+    v.measure();
+  }, [height, v]);
+  /** 行の地：選んだ行はアクセントの色、ほかは 1 行おきの色（設定したとき）と区切りの線。 */
+  const tone = (i: number, on: boolean) =>
+    `${on ? "bg-accent-fill text-white" : `${stripes && i % 2 === 1 ? "bg-ink/[0.05]" : ""} hover:bg-hover`} ${rowLines ? "border-b border-line/70" : ""}`;
   const tagName = new Map(tags.map((t) => [t.id, t.name]));
   const chosen = new Set(selected);
   const root = place.kind === "root" ? roots.find((r) => r.id === place.id) : undefined;
@@ -139,6 +149,8 @@ function ListView({ empty }: { empty: boolean }) {
                     rootId={root?.id ?? 0}
                     columns={columns}
                     template={template}
+                    height={height}
+                    tone={tone(row.index, dirFocus === d.path)}
                   />
                 );
               }
@@ -154,6 +166,8 @@ function ListView({ empty }: { empty: boolean }) {
                   tagNames={f.tags.map((id) => tagName.get(id) ?? "").filter(Boolean)}
                   columns={columns}
                   template={template}
+                  height={height}
+                  tone={tone(row.index, chosen.has(f.id))}
                 />
               );
             })}
@@ -212,6 +226,8 @@ function FileLine({
   tagNames,
   columns,
   template,
+  height,
+  tone,
 }: {
   file: FileRow;
   top: number;
@@ -221,6 +237,8 @@ function FileLine({
   tagNames: string[];
   columns: Column[];
   template: string;
+  height: number;
+  tone: string;
 }) {
   const dim = on ? "" : "text-dim";
   const cell = (c: Column) => {
@@ -271,8 +289,8 @@ function FileLine({
       onMouseDown={(e) => pressFile(e, f, on)}
       onDoubleClick={() => runCommand("file.open")}
       onContextMenu={(e) => fileContextMenu(e, f)}
-      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"} ${f.missing ? "opacity-60" : ""}`}
-      style={{ top, height: ROW_H, gridTemplateColumns: template }}
+      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${tone} ${f.missing ? "opacity-60" : ""}`}
+      style={{ top, height, gridTemplateColumns: template }}
     >
       <span className="flex min-w-0 items-center gap-2">
         <KindIcon ext={f.ext} on={on} />
@@ -297,6 +315,8 @@ function DirLine({
   rootId,
   columns,
   template,
+  height,
+  tone,
 }: {
   dir: SubDir;
   top: number;
@@ -305,6 +325,8 @@ function DirLine({
   rootId: number;
   columns: Column[];
   template: string;
+  height: number;
+  tone: string;
 }) {
   const dim = on ? "" : "text-dim";
   return (
@@ -312,8 +334,8 @@ function DirLine({
       onMouseDown={(e) => e.button === 0 && useStore.getState().focusDir(dir.path)}
       onDoubleClick={() => useStore.getState().enterDir(dir.path)}
       onContextMenu={(e) => dirContextMenu(e, dir.path, rootId)}
-      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"}`}
-      style={{ top, height: ROW_H, gridTemplateColumns: template }}
+      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${tone}`}
+      style={{ top, height, gridTemplateColumns: template }}
       title={dir.path}
     >
       <span className="flex min-w-0 items-center gap-2">

@@ -186,6 +186,11 @@ export type Column = "place" | "kind" | "date" | "size" | "tags";
 export const COLUMNS: Column[] = ["place", "kind", "date", "size", "tags"];
 export const DEFAULT_COLUMNS: Column[] = ["place", "kind", "date", "tags"];
 
+/** リストの行の高さ（docs/CONCEPT.md「リストの見た目」）。 */
+export type Density = "compact" | "normal" | "relaxed";
+export const DENSITIES: Density[] = ["compact", "normal", "relaxed"];
+export const ROW_HEIGHT: Record<Density, number> = { compact: 24, normal: 28, relaxed: 36 };
+
 /** 左右のパネルの幅（px）：はじめ・いちばん狭い・いちばん広い。 */
 export const PANEL_WIDTH = {
   sidebar: { initial: 240, min: 190, max: 420 },
@@ -199,6 +204,10 @@ export const clampWidth = (panel: Panel, px: number) => Math.round(Math.min(PANE
 export type Prefs = {
   layout: Layout;
   columns: Column[];
+  /** リストの行の高さ・行の区切りの線・1 行おきの色。 */
+  density: Density;
+  rowLines: boolean;
+  stripes: boolean;
   sidebarOpen: boolean;
   detailsOpen: boolean;
   sidebarWidth: number;
@@ -210,6 +219,9 @@ const PREFS_KEY = "bindery.prefs";
 export const DEFAULT_PREFS: Prefs = {
   layout: "list",
   columns: DEFAULT_COLUMNS,
+  density: "normal",
+  rowLines: false,
+  stripes: false,
   sidebarOpen: true,
   detailsOpen: true,
   sidebarWidth: PANEL_WIDTH.sidebar.initial,
@@ -224,6 +236,9 @@ export function loadPrefs(): Prefs {
     return {
       layout: v.layout === "grid" ? "grid" : "list",
       columns: Array.isArray(v.columns) ? COLUMNS.filter((c) => v.columns!.includes(c)) : DEFAULT_COLUMNS,
+      density: DENSITIES.includes(v.density as Density) ? (v.density as Density) : "normal",
+      rowLines: v.rowLines === true,
+      stripes: v.stripes === true,
       sidebarOpen: v.sidebarOpen !== false,
       detailsOpen: v.detailsOpen !== false,
       sidebarWidth: num(v.sidebarWidth, "sidebar"),

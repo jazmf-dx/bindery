@@ -114,8 +114,9 @@ export const COMMANDS: Command[] = [
   // 表示（docs/CONCEPT.md「ツールバーと表示の切り替え」）
   { id: "view.grid", label: "グリッド", keys: ["Mod+1"], run: () => st().setLayout("grid") },
   { id: "view.list", label: "リスト", keys: ["Mod+2"], run: () => st().setLayout("list") },
-  { id: "view.sidebar", label: "サイドバーを表示／隠す", keys: ["Mod+Alt+S"], inFields: true, run: () => st().toggleSidebar() },
-  { id: "view.details", label: "詳細パネルを表示／隠す", keys: ["Mod+Alt+I"], inFields: true, run: () => st().toggleDetails() },
+  // パネルのキーは stockroom と同じ（Tab は入力欄の中では字下げなどに使うので、欄の外でだけ）
+  { id: "view.sidebar", label: "サイドバーを表示／隠す", keys: ["Tab", "Mod+Alt+1"], run: () => st().toggleSidebar() },
+  { id: "view.details", label: "詳細パネルを表示／隠す", keys: ["Mod+I", "Mod+Alt+2"], run: () => st().toggleDetails() },
 
   // 表示・ヘルプ
   // 外観（stockroom と同じ：ツールバーのボタンと ⌘⇧D はシステム → ライト → ダークの順に回す）
