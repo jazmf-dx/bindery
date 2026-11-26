@@ -5,7 +5,7 @@
  * 仮想フォルダの行はドラッグで別の仮想フォルダの下へ（「仮想フォルダ」の見出しへ落とすと一番上へ）移せる。
  * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, Folder, FolderOpen, FolderPlus, HelpCircle, History, Inbox, Layers, Plus, Tag as TagIcon, X } from "lucide-react";
 import type { Dir, Place, Root, Tag, VFolder } from "../lib/api";
 import { command, runCommand } from "../lib/commands";
@@ -296,7 +296,7 @@ function TagRow({ tag }: { tag: Tag }) {
 }
 
 /** 登録フォルダ・中のフォルダの右クリックのメニュー。 */
-function rootMenu(root: Root, dir: string): Entry[] {
+export function rootMenu(root: Root, dir: string): Entry[] {
   const st = useStore.getState();
   return [
     { label: command("folder.reveal").label, run: () => st.revealRoot(root.id, dir) },
@@ -307,7 +307,7 @@ function rootMenu(root: Root, dir: string): Entry[] {
 
 function RootRow({ root }: { root: Root }) {
   const removeRoot = useStore((s) => s.removeRoot);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useOpenToPlace(root.id, "");
   const top = root.dirs.filter((d) => !d.path.includes("/"));
   return (
     <>
@@ -333,7 +333,7 @@ function RootRow({ root }: { root: Root }) {
 
 /** 登録フォルダの中のフォルダ。選ぶと、そのフォルダに直接入っているファイルが出る。 */
 function DirRow({ root, dir, depth }: { root: Root; dir: Dir; depth: number }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useOpenToPlace(root.id, dir.path);
   const children = root.dirs.filter((d) => d.path.startsWith(`${dir.path}/`) && !d.path.slice(dir.path.length + 1).includes("/"));
   return (
     <>
@@ -350,6 +350,19 @@ function DirRow({ root, dir, depth }: { root: Root; dir: Dir; depth: number }) {
       {open && children.map((d) => <DirRow key={d.path} root={root} dir={d} depth={depth + 1} />)}
     </>
   );
+}
+
+/**
+ * 木の開け閉め（はじめは閉じている）。一覧のフォルダの行から下へ入ったときは、
+ * 今の場所が見えるよう、その上の行を開く。
+ */
+function useOpenToPlace(rootId: number, path: string) {
+  const [open, setOpen] = useState(false);
+  const inside = useStore((s) => s.place.kind === "root" && s.place.id === rootId && s.place.dir.startsWith(path ? `${path}/` : "") && s.place.dir !== path);
+  useEffect(() => {
+    if (inside) setOpen(true);
+  }, [inside]);
+  return [open, setOpen] as const;
 }
 
 /** 開け閉めの印。中のフォルダが無い行も、同じ幅を空けて名前の位置をそろえる。 */

@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from "./lib/api";
 import { EXTENSIONS, kindOfPath } from "./lib/kinds";
 import { warn } from "./lib/log";
-import { loadSort, nextSort, NO_FILTERS, RECENT_SORT, saveSort, visible, type Filters, type Sort, type SortKey } from "./lib/view";
+import { childDirs, hasFilters, loadSort, nextSort, NO_FILTERS, parentDir, RECENT_SORT, saveSort, visible, type Filters, type Sort, type SortKey, type SubDir } from "./lib/view";
 
 export const samePlace = (a: Place, b: Place) =>
   a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null) && ("dir" in a ? a.dir : null) === ("dir" in b ? b.dir : null);
@@ -31,6 +31,10 @@ type State = {
   allFiles: FileRow[];
   /** 一覧に出すもの：`allFiles` を絞り込み、並べ替えたもの。選ぶ・矢印で動くのはこの順。 */
   files: FileRow[];
+  /** 一覧の先頭に出す、今のフォルダの中のフォルダ（登録フォルダ・中のフォルダを開いているときだけ）。 */
+  subdirs: SubDir[];
+  /** 一覧で選んでいるフォルダの行（ファイルの選択とは同時に持たない）。 */
+  dirFocus: string | null;
   /** 絞り込みの文字（今の場所の中で絞る。場所を変えても残す）。 */
   query: string;
   /** 一覧の上の条件（タグ・種類・更新日）。絞り込みと同じく、場所を変えても残す。 */
@@ -58,6 +62,12 @@ type State = {
   setFilters: (filters: Filters) => void;
   sortBy: (key: SortKey) => void;
   click: (id: number, e: { shift: boolean; toggle: boolean }) => void;
+  /** 一覧のフォルダの行を選ぶ。 */
+  focusDir: (path: string) => void;
+  /** 今の登録フォルダの中のフォルダへ入る。 */
+  enterDir: (path: string) => void;
+  /** 1 つ上のフォルダへ（入っていたフォルダを選んだままにする）。 */
+  goUp: () => void;
   selectAll: () => void;
   clearSelection: () => void;
   step: (delta: number, extend: boolean) => void;
@@ -117,17 +127,21 @@ async function attempt(title: string, f: () => Promise<unknown>) {
 }
 
 /** 今の状態から、一覧に出す行と、まだ見えている選択を作り直す。 */
-function refresh(s: Pick<State, "allFiles" | "query" | "filters" | "sort" | "recentSort" | "place" | "tags" | "selected">) {
+function refresh(s: Pick<State, "allFiles" | "query" | "filters" | "sort" | "recentSort" | "place" | "tags" | "selected" | "roots" | "dirFocus">) {
   const recent = s.place.kind === "recent";
   const files = visible(s.allFiles, s.query, s.filters, recent ? s.recentSort : s.sort, recent, s.tags);
   const still = new Set(files.map((f) => f.id));
-  return { files, selected: s.selected.filter((id) => still.has(id)) };
+  const subdirs = childDirs(s.roots, s.place, s.query.trim() !== "" || hasFilters(s.filters));
+  const dirFocus = s.dirFocus !== null && subdirs.some((d) => d.path === s.dirFocus) ? s.dirFocus : null;
+  return { files, subdirs, dirFocus, selected: s.selected.filter((id) => still.has(id)) };
 }
 
 export const useStore = create<State>((set, get) => ({
   roots: [],
   allFiles: [],
   files: [],
+  subdirs: [],
+  dirFocus: null,
   query: "",
   filters: NO_FILTERS,
   sort: loadSort(),
@@ -181,13 +195,14 @@ export const useStore = create<State>((set, get) => ({
           // 消したタグは条件からも外す
           const f = get().filters;
           const filters = f.tags.every((id) => tags.some((t) => t.id === id)) ? f : { ...f, tags: f.tags.filter((id) => tags.some((t) => t.id === id)) };
-          const next = refresh({ ...get(), allFiles: files, tags, filters });
+          const next = refresh({ ...get(), allFiles: files, tags, filters, roots });
           // 落としたファイルを登録したあと：見つかったら選ぶ
           if (pendingSelect.length) {
             const want = new Set(pendingSelect);
             const found = next.files.filter((x) => want.has(x.path)).map((x) => x.id);
             if (found.length) {
               next.selected = found;
+              next.dirFocus = null;
               pendingSelect = [];
             }
           }
@@ -204,8 +219,24 @@ export const useStore = create<State>((set, get) => ({
   go: (place) => {
     pendingSelect = [];
     // 「最近の変更」は、開くたびに気付いた日の新しい順から
-    set({ place, selected: [], anchor: null, ...(place.kind === "recent" ? { recentSort: RECENT_SORT } : {}) });
+    set({ place, selected: [], anchor: null, dirFocus: null, ...(place.kind === "recent" ? { recentSort: RECENT_SORT } : {}) });
     get().load();
+  },
+
+  focusDir: (path) => set({ dirFocus: path, selected: [], anchor: null }),
+
+  enterDir: (path) => {
+    const { place } = get();
+    if (place.kind === "root") get().go({ kind: "root", id: place.id, dir: path });
+  },
+
+  goUp: () => {
+    const { place } = get();
+    if (place.kind !== "root" || !place.dir) return;
+    const from = place.dir;
+    get().go({ kind: "root", id: place.id, dir: parentDir(from) });
+    // 読み終わる前でも選んでおく（refresh で、出てこなければ外れる）
+    set({ dirFocus: from });
   },
 
   setQuery: (query) => set({ query, ...refresh({ ...get(), query }) }),
@@ -230,29 +261,43 @@ export const useStore = create<State>((set, get) => ({
       const b = files.findIndex((f) => f.id === id);
       if (a >= 0 && b >= 0) {
         const [lo, hi] = a < b ? [a, b] : [b, a];
-        set({ selected: files.slice(lo, hi + 1).map((f) => f.id) });
+        set({ selected: files.slice(lo, hi + 1).map((f) => f.id), dirFocus: null });
         return;
       }
     }
     if (toggle) {
       const on = selected.includes(id);
-      set({ selected: on ? selected.filter((x) => x !== id) : [...selected, id], anchor: id });
+      set({ selected: on ? selected.filter((x) => x !== id) : [...selected, id], anchor: id, dirFocus: null });
       return;
     }
-    set({ selected: [id], anchor: id });
+    set({ selected: [id], anchor: id, dirFocus: null });
   },
 
-  selectAll: () => set({ selected: get().files.map((f) => f.id) }),
-  clearSelection: () => set({ selected: [], anchor: null }),
+  selectAll: () => set({ selected: get().files.map((f) => f.id), dirFocus: null }),
+  clearSelection: () => set({ selected: [], anchor: null, dirFocus: null }),
 
+  // 一覧の行は、先頭のフォルダの行に続けてファイルの行。矢印はその順に動く（範囲を選ぶのはファイルだけ）
   step: (delta, extend) => {
-    const { files, selected, anchor } = get();
-    if (files.length === 0) return;
+    const { files, subdirs, dirFocus, selected, anchor } = get();
+    const total = subdirs.length + files.length;
+    if (total === 0) return;
     const last = selected.length ? selected[selected.length - 1] : null;
-    const at = last === null ? (delta > 0 ? -1 : files.length) : files.findIndex((f) => f.id === last);
-    const next = files[Math.min(files.length - 1, Math.max(0, at + delta))];
-    if (extend && anchor !== null) get().click(next.id, { shift: true, toggle: false });
-    else set({ selected: [next.id], anchor: next.id });
+    const at =
+      dirFocus !== null
+        ? subdirs.findIndex((d) => d.path === dirFocus)
+        : last !== null
+          ? subdirs.length + files.findIndex((f) => f.id === last)
+          : delta > 0
+            ? -1
+            : total;
+    const to = Math.min(total - 1, Math.max(0, at + delta));
+    if (to < subdirs.length) {
+      if (!extend) get().focusDir(subdirs[to].path);
+      return;
+    }
+    const next = files[to - subdirs.length];
+    if (extend && anchor !== null && dirFocus === null) get().click(next.id, { shift: true, toggle: false });
+    else set({ selected: [next.id], anchor: next.id, dirFocus: null });
   },
 
   setScanning: (scanning) => set({ scanning }),
@@ -329,6 +374,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   openSelected: () => {
+    const { dirFocus } = get();
+    if (dirFocus !== null) return get().enterDir(dirFocus);
     const ids = get().selected;
     if (ids.length) api.openFiles(ids).catch((e) => message(String(e), { title: "開けませんでした", kind: "warning" }));
   },

@@ -30,6 +30,16 @@ export function kindOfPath(path: string): Kind | null {
   return dot > 0 ? (BY_EXT[name.slice(dot + 1).toLowerCase()] ?? null) : null;
 }
 
+/** アイコンの分け方：種類に、テキストの形式（CSV・Markdown）を足したもの。 */
+export type IconKind = Kind | "csv" | "markdown";
+
+export function iconKindOf(ext: string): IconKind {
+  const e = ext.toLowerCase();
+  if (e === "csv" || e === "tsv") return "csv";
+  if (e === "md" || e === "markdown") return "markdown";
+  return kindOf(e);
+}
+
 /** 種類の名前（条件の選択肢）。 */
 export const KINDS: Kind[] = ["pdf", "word", "excel", "powerpoint", "text"];
 export const kindName = (k: Kind) => LABEL[k];

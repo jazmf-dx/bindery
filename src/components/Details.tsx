@@ -12,7 +12,7 @@ import { composing } from "../lib/ime";
 import { formatDate, formatSize, kindLabel } from "../lib/kinds";
 import { dragRegion } from "../lib/titleBar";
 import { folderPath, useStore } from "../store";
-import { KindIcon } from "./FileList";
+import { KindIcon } from "./KindIcon";
 
 export function Details() {
   const files = useStore((s) => s.files);

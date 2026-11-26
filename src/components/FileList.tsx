@@ -5,18 +5,21 @@
  * 見出しの上の欄で、今の場所の中を絞り込む。その下の条件の行で、タグ・種類・更新日で絞る。
  * 列の見出しを押すと並べ替える（docs/CONCEPT.md「探す」「条件の組み合わせ」）。
  * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
+ * 登録フォルダ・中のフォルダを開いているときは、先頭に中のフォルダの行を出す（ダブルクリック・Enter で入る、⌘↑ で上へ）。
  */
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, FileSpreadsheet, FileText, FileType, Presentation, RefreshCw, Search, StickyNote, Tag as TagIcon, X } from "lucide-react";
+import { ArrowDown, ArrowUp, RefreshCw, Search, StickyNote, Tag as TagIcon, X } from "lucide-react";
 import type { FileRow, Root } from "../lib/api";
 import { keyLabel, runCommand, SEARCH_FIELD } from "../lib/commands";
 import { cmd, openMenu, type Entry } from "../lib/contextMenu";
 import { composing } from "../lib/ime";
-import { formatDate, kindLabel, kindName, kindOf, KINDS, relativeDir, type Kind } from "../lib/kinds";
+import { formatDate, kindLabel, kindName, KINDS, relativeDir, type Kind } from "../lib/kinds";
 import { dragRegion } from "../lib/titleBar";
-import { hasFilters, NO_FILTERS, type SortKey, type Within } from "../lib/view";
+import { hasFilters, NO_FILTERS, type SortKey, type SubDir, type Within } from "../lib/view";
 import { folderPath, useStore } from "../store";
+import { FolderIcon, KindIcon } from "./KindIcon";
+import { rootMenu } from "./Sidebar";
 
 const isMac = navigator.userAgent.includes("Mac");
 const COLS = "grid-cols-[minmax(0,3fr)_minmax(0,2fr)_8rem_10.5rem_minmax(0,1.5fr)]";
@@ -33,15 +36,41 @@ function placeTitle(): string {
       return "行方不明";
     case "recent":
       return "最近の変更";
-    case "root": {
-      const name = roots.find((r) => r.id === place.id)?.name ?? "";
-      return place.dir ? `${name} › ${place.dir.split("/").join(" › ")}` : name;
-    }
+    case "root":
+      return roots.find((r) => r.id === place.id)?.name ?? "";
     case "tag":
       return `タグ：${tags.find((t) => t.id === place.id)?.name ?? ""}`;
     case "folder":
       return folderPath(vfolders, place.id);
   }
+}
+
+/**
+ * 見出しの場所の名前。中のフォルダでは「登録フォルダ › 中 › 中」と出し、上の階層を押すとそこへ移る。
+ */
+function Title() {
+  const place = useStore((s) => s.place);
+  const go = useStore((s) => s.go);
+  if (place.kind !== "root" || !place.dir) return <span className="truncate font-semibold">{placeTitle()}</span>;
+  const parts = place.dir.split("/");
+  const crumb = (label: string, dir: string) => (
+    <button key={dir} className="ghost min-w-0 shrink truncate rounded px-1 text-dim" title={`${label}へ`} onClick={() => go({ kind: "root", id: place.id, dir })}>
+      {label}
+    </button>
+  );
+  return (
+    <span className="-ml-1 flex min-w-0 items-center gap-0.5 font-semibold">
+      {crumb(placeTitle(), "")}
+      {parts.slice(0, -1).map((p, i) => (
+        <span key={i} className="flex min-w-0 shrink items-center gap-0.5">
+          <span className="text-dim">›</span>
+          {crumb(p, parts.slice(0, i + 1).join("/"))}
+        </span>
+      ))}
+      <span className="text-dim">›</span>
+      <span className="min-w-0 truncate px-1">{parts[parts.length - 1]}</span>
+    </span>
+  );
 }
 
 export function Header() {
@@ -58,7 +87,7 @@ export function Header() {
   return (
     <div className="shrink-0 border-b border-line px-4 pt-[var(--titlebar)]" {...dragRegion(true)}>
       <div className="flex h-10 items-center gap-3">
-        <span className="truncate font-semibold">{placeTitle()}</span>
+        <Title />
         <span className="shrink-0 text-dim tabular-nums">
           {narrowed ? `${count} / ${total} 件` : `${count} 件`}
           {selected > 1 ? `（${selected} 件を選択）` : ""}
@@ -236,33 +265,40 @@ function ColumnHeads() {
 
 export function FileList() {
   const files = useStore((s) => s.files);
+  const subdirs = useStore((s) => s.subdirs);
+  const dirFocus = useStore((s) => s.dirFocus);
   const roots = useStore((s) => s.roots);
   const tags = useStore((s) => s.tags);
   const place = useStore((s) => s.place);
   const selected = useStore((s) => s.selected);
   const scroller = useRef<HTMLDivElement>(null);
-  const v = useVirtualizer({ count: files.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
+  // 行は、先頭のフォルダの行に続けてファイルの行
+  const v = useVirtualizer({ count: subdirs.length + files.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
   const tagName = new Map(tags.map((t) => [t.id, t.name]));
   const chosen = new Set(selected);
+  const root = place.kind === "root" ? roots.find((r) => r.id === place.id) : undefined;
 
   // 矢印キーで選んだ行が見えるように
   const last = selected[selected.length - 1];
   useEffect(() => {
-    if (last === undefined) return;
-    const i = files.findIndex((f) => f.id === last);
-    if (i >= 0) v.scrollToIndex(i, { align: "auto" });
-  }, [last, files, v]);
+    const i = dirFocus !== null ? subdirs.findIndex((d) => d.path === dirFocus) : last === undefined ? -1 : subdirs.length + files.findIndex((f) => f.id === last);
+    if (i >= 0 && (dirFocus !== null || i >= subdirs.length)) v.scrollToIndex(i, { align: "auto" });
+  }, [last, dirFocus, files, subdirs, v]);
 
   return (
     <>
       <ColumnHeads />
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && useStore.getState().clearSelection()}>
-        {files.length === 0 ? (
+        {files.length + subdirs.length === 0 ? (
           <EmptyList />
         ) : (
           <div style={{ height: v.getTotalSize(), position: "relative" }}>
             {v.getVirtualItems().map((row) => {
-              const f = files[row.index];
+              if (row.index < subdirs.length) {
+                const d = subdirs[row.index];
+                return <DirLine key={`dir:${d.path}`} dir={d} top={row.start} on={dirFocus === d.path} where={place.kind === "root" ? place.dir : ""} rootId={root?.id ?? 0} />;
+              }
+              const f = files[row.index - subdirs.length];
               return (
                 <FileLine
                   key={f.id}
@@ -270,7 +306,7 @@ export function FileList() {
                   top={row.start}
                   on={chosen.has(f.id)}
                   recent={place.kind === "recent"}
-                  where={place.kind === "root" ? relativeDir(roots.find((r) => r.id === f.rootId)?.path ?? "", f.path) : joinPlace(roots, f)}
+                  where={place.kind === "root" ? relativeDir(root?.path ?? "", f.path) : joinPlace(roots, f)}
                   tagNames={f.tags.map((id) => tagName.get(id) ?? "").filter(Boolean)}
                 />
               );
@@ -304,7 +340,7 @@ function FileLine({ file: f, top, on, recent, where, tagNames }: { file: FileRow
       style={{ top, height: ROW_H }}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <KindIcon ext={f.ext} />
+        <KindIcon ext={f.ext} on={on} />
         <span className="truncate">{f.name}</span>
         {f.note && (
           <span className={`shrink-0 ${on ? "" : "text-dim"}`} title={f.note}>
@@ -331,6 +367,36 @@ function FileLine({ file: f, top, on, recent, where, tagNames }: { file: FileRow
           </span>
         ))}
       </span>
+    </div>
+  );
+}
+
+/** 中のフォルダの行。ダブルクリックで入る。列は名前（と中のファイルの数）・場所・種類だけ。 */
+function DirLine({ dir, top, on, where, rootId }: { dir: SubDir; top: number; on: boolean; where: string; rootId: number }) {
+  const dim = on ? "" : "text-dim";
+  return (
+    <div
+      onMouseDown={(e) => e.button === 0 && useStore.getState().focusDir(dir.path)}
+      onDoubleClick={() => useStore.getState().enterDir(dir.path)}
+      onContextMenu={(e) => {
+        const st = useStore.getState();
+        st.focusDir(dir.path);
+        const root = st.roots.find((r) => r.id === rootId);
+        if (root) openMenu(e, () => [{ label: "開く", run: () => st.enterDir(dir.path) }, "-", ...rootMenu(root, dir.path)]);
+      }}
+      className={`absolute inset-x-0 grid ${COLS} items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"}`}
+      style={{ top, height: ROW_H }}
+      title={dir.path}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <FolderIcon on={on} />
+        <span className="truncate">{dir.name}</span>
+        <span className={`shrink-0 text-[11px] tabular-nums ${dim}`}>{dir.count} 件</span>
+      </span>
+      <span className={`truncate ${dim}`}>{where.split("/").join(" › ")}</span>
+      <span className={`truncate ${dim}`}>フォルダ</span>
+      <span />
+      <span />
     </div>
   );
 }
@@ -447,16 +513,9 @@ function EmptyList() {
         unsorted: "未整理のファイルはありません",
         missing: "行方不明のファイルはありません",
         recent: "この 7 日のあいだに、中身が変わったファイル・増えたファイルはありません。起動したときと［読み直す］で気付きます",
-        root: "このフォルダに直接入っているファイルはありません。中のフォルダは、サイドバーの ▸ で開けます",
+        root: "このフォルダには、扱うファイル（PDF・オフィス文書・テキスト）がありません",
         tag: "このタグのファイルはありません。一覧から行をこのタグへドラッグすると付きます",
         folder: "この仮想フォルダは空です。一覧から行をここへドラッグすると入ります",
       }[place.kind];
   return <div className="flex h-full items-center justify-center px-6 text-center text-dim">{text}</div>;
 }
-
-export function KindIcon({ ext }: { ext: string }) {
-  const k = kindOf(ext);
-  const Icon = k === "excel" ? FileSpreadsheet : k === "powerpoint" ? Presentation : k === "word" ? FileType : FileText;
-  return <Icon size={15} className="shrink-0 opacity-80" />;
-}
-

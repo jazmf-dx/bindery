@@ -2,7 +2,7 @@
  * 一覧に出す行を決める：今の場所のファイルを、絞り込みの文字で絞り、列で並べ替える
  * （docs/CONCEPT.md「探す」）。データベースから読んだ行はそのままにして、ここで写しを作る。
  */
-import type { FileRow, Tag } from "./api";
+import type { FileRow, Place, Root, Tag } from "./api";
 import { kindLabel, kindOf, type Kind } from "./kinds";
 import { warn } from "./log";
 
@@ -88,6 +88,31 @@ export function visible(all: FileRow[], query: string, filters: Filters, sort: S
   const since = filters.within === null ? null : withinSince(filters.within);
   return all.filter((f) => passes(f, filters, since) && matches(f, terms, tagName)).sort(compare(sort, recent));
 }
+
+/** 一覧の先頭に出す、今のフォルダの中のフォルダ。`count` は下の階層まで含めたファイルの数。 */
+export type SubDir = { path: string; name: string; count: number };
+
+/**
+ * 登録フォルダ・中のフォルダを開いているとき、そのすぐ下のフォルダ（名前の順）。
+ * 絞り込み・条件で絞っているときは出さない（探しているのはファイルなので）。
+ */
+export function childDirs(roots: Root[], place: Place, narrowing: boolean): SubDir[] {
+  if (place.kind !== "root" || narrowing) return [];
+  const root = roots.find((r) => r.id === place.id);
+  if (!root) return [];
+  const prefix = place.dir ? `${place.dir}/` : "";
+  return root.dirs
+    .filter((d) => d.path.startsWith(prefix) && d.path.length > prefix.length && !d.path.slice(prefix.length).includes("/"))
+    .map((d) => ({
+      path: d.path,
+      name: d.path.slice(prefix.length),
+      count: root.dirs.reduce((n, x) => (x.path === d.path || x.path.startsWith(`${d.path}/`) ? n + x.count : n), 0),
+    }))
+    .sort((a, b) => collator.compare(a.name, b.name));
+}
+
+/** 中のフォルダの 1 つ上（登録フォルダの直下なら空）。 */
+export const parentDir = (dir: string) => (dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "");
 
 /** 列の見出しを押したとき：同じ列なら逆に、別の列なら日付は新しい順・ほかは昇順から。 */
 export const nextSort = (now: Sort, key: SortKey): Sort => (now.key === key ? { key, desc: !now.desc } : { key, desc: key === "date" });

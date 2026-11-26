@@ -60,6 +60,15 @@
 
 :root {
   color-scheme: dark;
+  /* 種類のアイコンの色（KindIcon.tsx）。白い印を載せるので、白と 3:1 以上にする。@theme に置くと、使うクラスが無いので出力から消える。 */
+  --color-kind-pdf: #e5484d;
+  --color-kind-word: #3b7be8;
+  --color-kind-excel: #219a5b;
+  --color-kind-powerpoint: #e5622a;
+  --color-kind-csv: #0f9488;
+  --color-kind-markdown: #8b63e0;
+  --color-kind-text: #7d818b;
+  --color-kind-folder: #5fa8f0;
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -91,6 +100,14 @@
   --color-off-edge: rgb(0 0 0 / 0.14);
   --color-danger: #d02a2a;
   --color-success: #167a48;
+  --color-kind-pdf: #d93036;
+  --color-kind-word: #2463d6;
+  --color-kind-excel: #17824a;
+  --color-kind-powerpoint: #d4501a;
+  --color-kind-csv: #0b7f75;
+  --color-kind-markdown: #7246d0;
+  --color-kind-text: #6b6f78;
+  --color-kind-folder: #3d8fe0;
 }
 
 html,
