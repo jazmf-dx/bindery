@@ -49,8 +49,8 @@ function Pill({
         title={title ?? (on ? `${label}：${value}` : label)}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className={`flex h-6 shrink-0 items-center gap-1 rounded-full border border-transparent pr-1 pl-2.5 whitespace-nowrap disabled:off ${
-          on ? "bg-tonal text-on-tonal enabled:hover:brightness-110" : open ? "bg-press" : "bg-control enabled:hover:bg-hover"
+        className={`flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent pr-1.5 pl-2.5 whitespace-nowrap disabled:off disabled:bg-transparent ${
+          on ? "bg-tonal text-on-tonal enabled:hover:brightness-110" : open ? "bg-press" : "bg-ink/8 enabled:hover:bg-ink/12"
         }`}
       >
         <span>{label}</span>
@@ -66,13 +66,13 @@ function Pill({
               setOpen(false);
               onClear();
             }}
-            className="flex h-4.5 w-4.5 items-center justify-center rounded-full hover:bg-ink/20"
+            className="flex h-5 w-5 items-center justify-center rounded-full hover:bg-ink/20"
           >
-            <X size={11} />
+            <X size={12} />
           </span>
         ) : (
-          <span className="flex h-4.5 w-4.5 items-center justify-center">
-            <ChevronDown size={11} className="text-dim" />
+          <span className="flex h-5 w-5 items-center justify-center">
+            <ChevronDown size={12} className="text-dim" />
           </span>
         )}
       </button>
@@ -95,39 +95,51 @@ function useCounts<V>(key: FilterKey, valuesOf: (f: FileRow) => V[]): Map<V, num
   return useMemo(() => facetCounts(allFiles, query, filters, tags, key, valuesOf), [allFiles, query, filters, tags, key]);
 }
 
-export function FilterRow() {
+/** `display`：帯の右端に置く、一覧の見せ方の操作（Toolbar.tsx）。 */
+export function FilterRow({ display }: { display?: ReactNode }) {
   const filters = useStore((s) => s.filters);
   const tags = useStore((s) => s.tags);
   const setFilters = useStore((s) => s.setFilters);
   const chosenTags = tags.filter((t) => filters.tags.includes(t.id));
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-line px-3 text-[12px] [scrollbar-width:none]">
-      <ListFilter size={13} className="mr-0.5 shrink-0 text-dim" aria-label="条件" />
-      <Pill label="種類" value={filters.kinds.map(iconKindName).join("、")} onClear={() => setFilters({ ...filters, kinds: [] })} width="w-60">
-        <KindMenu />
-      </Pill>
-      <Pill
-        label="タグ"
-        value={chosenTags.map((t) => t.name).join(filters.tagMode === "all" ? " かつ " : " または ")}
-        disabled={tags.length === 0}
-        title={tags.length === 0 ? "タグがありません（詳細パネルやサイドバーで作れます）" : undefined}
-        onClear={() => setFilters({ ...filters, tags: [] })}
-        width="w-64"
+    // ツールバーの中で 1 段沈めた帯（stockroom と同じ）。条件と、右端に一覧の見せ方
+    <div className="-mx-4 flex min-h-10 items-center gap-x-3 bg-band px-4 py-1.5 text-[12px]">
+      <span className="flex shrink-0 items-center gap-1.5 text-dim @max-4xl:hidden">
+        <ListFilter size={13} /> 絞り込み
+      </span>
+      {/* 条件がいくつか入る幅は、いつも取っておく */}
+      <div className="flex min-w-[8rem] flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <Pill label="種類" value={filters.kinds.map(iconKindName).join("、")} onClear={() => setFilters({ ...filters, kinds: [] })} width="w-60">
+          <KindMenu />
+        </Pill>
+        <Pill
+          label="タグ"
+          value={chosenTags.map((t) => t.name).join(filters.tagMode === "all" ? " かつ " : " または ")}
+          disabled={tags.length === 0}
+          title={tags.length === 0 ? "タグがありません（詳細パネルやサイドバーで作れます）" : undefined}
+          onClear={() => setFilters({ ...filters, tags: [] })}
+          width="w-64"
+        >
+          <TagMenu />
+        </Pill>
+        <Pill label="更新日" value={WITHIN.find((w) => w.value === filters.within)?.label ?? ""} onClear={() => setFilters({ ...filters, within: null })}>
+          <WithinMenu />
+        </Pill>
+        <Pill label="メモ" value={filters.note === null ? "" : filters.note ? "あり" : "なし"} onClear={() => setFilters({ ...filters, note: null })} width="w-44">
+          <NoteMenu />
+        </Pill>
+      </div>
+      {/* 外すものが無くても場所は取っておく（押せないだけ。右のものを動かさない） */}
+      <button
+        className="ghost h-7 shrink-0 rounded-md px-2 text-dim disabled:off"
+        disabled={!hasFilters(filters)}
+        title="条件をすべて外す"
+        onClick={() => setFilters(NO_FILTERS)}
       >
-        <TagMenu />
-      </Pill>
-      <Pill label="更新日" value={WITHIN.find((w) => w.value === filters.within)?.label ?? ""} onClear={() => setFilters({ ...filters, within: null })}>
-        <WithinMenu />
-      </Pill>
-      <Pill label="メモ" value={filters.note === null ? "" : filters.note ? "あり" : "なし"} onClear={() => setFilters({ ...filters, note: null })} width="w-44">
-        <NoteMenu />
-      </Pill>
-      <span className="flex-1" />
-      {hasFilters(filters) && (
-        <button className="ghost shrink-0 rounded-md px-1.5 py-0.5 text-dim" onClick={() => setFilters(NO_FILTERS)}>
-          条件をすべて外す
-        </button>
-      )}
+        <span className="@max-3xl:hidden">条件を外す</span>
+        <X size={13} className="hidden @max-3xl:block" />
+      </button>
+      {display && <div className="flex shrink-0 items-center gap-2">{display}</div>}
     </div>
   );
 }

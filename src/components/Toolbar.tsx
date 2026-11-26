@@ -1,15 +1,16 @@
 /**
- * 一覧の上のツールバー（docs/CONCEPT.md「ツールバーと表示の切り替え」）。
- * macOS ではタイトルバーと同じ高さの 1 行に、場所の名前・件数・絞り込み・読み直す・表示の切り替え・パネルの開け閉めを置く。
- * サイドバーを隠したときは、ウィンドウのボタンの分だけ左を空ける。
+ * 一覧の上のツールバー（docs/CONCEPT.md「ツールバーと表示の切り替え」）。Stockroom と同じ 2 段。
+ * サイドバーを隠したときは、macOS のウィンドウのボタンの分だけ左を空ける。
  */
 import { useRef, useState } from "react";
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutGrid, LayoutList, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpDown, ArrowUpNarrowWide, ChevronDown, LayoutGrid, LayoutList, Monitor, Moon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, Search, SlidersHorizontal, Sun, X } from "lucide-react";
+import { appearanceLabel, nextAppearance } from "../lib/appearance";
 import { keyLabel, runCommand, SEARCH_FIELD } from "../lib/commands";
 import { composing } from "../lib/ime";
 import { dragRegion } from "../lib/titleBar";
 import { COLUMNS, hasFilters, SORT_KEYS, type Column, type Layout, type SortKey } from "../lib/view";
 import { folderPath, useStore } from "../store";
+import { FilterRow } from "./FilterRow";
 import { MenuHeading, MenuOption, Popover } from "./ui";
 
 function placeTitle(): string {
@@ -71,60 +72,67 @@ function Count() {
   const narrowed = useStore((s) => s.query.trim() !== "" || hasFilters(s.filters));
   const selected = useStore((s) => s.selected.length);
   return (
-    <span className={`shrink-0 tabular-nums ${narrowed ? "text-accent" : "text-dim"}`}>
+    <span className={`shrink-0 text-[12px] font-normal tabular-nums ${narrowed ? "text-accent" : "text-dim"}`}>
       {narrowed ? `${count} / ${total} 件` : `${count} 件`}
       {selected > 1 && <span className="text-dim">（{selected} 件を選択）</span>}
     </span>
   );
 }
 
-const iconButton = "ghost flex h-7 w-7 shrink-0 items-center justify-center rounded-md";
+const iconButton = "ghost flex h-8 w-8 shrink-0 items-center justify-center rounded-md";
 
+/**
+ * stockroom の Toolbar.tsx と同じ形：上の行に サイドバーの開け閉め・場所の名前と件数・絞り込み・読み直す・外観・詳細パネルの開け閉め、
+ * 下の帯（FilterRow.tsx）に条件と、右端に並び順・一覧の形・表示のメニュー。
+ */
 export function Toolbar() {
   const scanning = useStore((s) => s.scanning);
   const sidebarOpen = useStore((s) => s.prefs.sidebarOpen);
   const detailsOpen = useStore((s) => s.prefs.detailsOpen);
   return (
-    <div
-      className="@container flex h-10 shrink-0 items-center gap-2 border-b border-line pr-2 pl-3 transition-[padding] duration-200 ease-out"
+    <header
+      className="@container flex shrink-0 flex-col gap-2 border-b border-line bg-panel px-4 pt-2 transition-[padding] duration-200 ease-out"
       // サイドバーを隠すと、macOS のウィンドウのボタンがこの行に重なる
-      style={sidebarOpen ? undefined : { paddingLeft: "max(0.75rem, var(--traffic-lights))" }}
+      style={sidebarOpen ? undefined : { paddingLeft: "max(1rem, var(--traffic-lights))" }}
       {...dragRegion(true)}
     >
-      <button
-        className={`${iconButton} -ml-1 ${sidebarOpen ? "text-dim" : "text-accent"}`}
-        title={`サイドバーを${sidebarOpen ? "隠す" : "表示"}（${keyLabel("view.sidebar")}）`}
-        aria-label={`サイドバーを${sidebarOpen ? "隠す" : "表示"}`}
-        onClick={() => runCommand("view.sidebar")}
-      >
-        {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-      </button>
-      <Title />
-      <Count />
-      <span className="min-w-2 flex-1" />
-      <SearchField />
-      {/* 読み込み中の印と［読み直す］は同じ場所に置き、幅も同じにする */}
-      <button
-        className="ghost flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-dim @max-2xl:w-7 @max-2xl:justify-center @max-2xl:px-0 @2xl:w-[6.5rem] @2xl:justify-end"
-        onClick={() => runCommand("folder.rescan")}
-        disabled={scanning}
-        title={`読み直す（${keyLabel("folder.rescan")}）`}
-      >
-        <RefreshCw size={13} className={scanning ? "animate-spin" : ""} />
-        <span className="@max-2xl:hidden">{scanning ? "読み込み中…" : "読み直す"}</span>
-      </button>
-      <div className="mx-0.5 h-5 w-px shrink-0 bg-line" />
-      <LayoutSwitch />
-      <DisplayMenu />
-      <button
-        className={`${iconButton} ${detailsOpen ? "text-dim" : "text-accent"}`}
-        title={`詳細パネルを${detailsOpen ? "隠す" : "表示"}（${keyLabel("view.details")}）`}
-        aria-label={`詳細パネルを${detailsOpen ? "隠す" : "表示"}`}
-        onClick={() => runCommand("view.details")}
-      >
-        {detailsOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-      </button>
-    </div>
+      <div className="flex h-8 items-center gap-2">
+        <button
+          className={`${iconButton} -ml-1 ${sidebarOpen ? "text-dim" : "text-accent"}`}
+          title={`サイドバーを${sidebarOpen ? "隠す" : "表示"}（${keyLabel("view.sidebar")}）`}
+          aria-label={`サイドバーを${sidebarOpen ? "隠す" : "表示"}`}
+          onClick={() => runCommand("view.sidebar")}
+        >
+          {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        </button>
+        <h1 className="flex min-w-0 items-baseline gap-2 text-[15px]">
+          <Title />
+          <Count />
+        </h1>
+        <span className="min-w-2 flex-1" />
+        <SearchField />
+        {/* 読み込み中の印と［読み直す］は同じ場所に置き、幅も同じにする */}
+        <button
+          className="ghost flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-dim @max-2xl:w-8 @max-2xl:justify-center @max-2xl:px-0 @2xl:w-[6.5rem] @2xl:justify-end"
+          onClick={() => runCommand("folder.rescan")}
+          disabled={scanning}
+          title={`読み直す（${keyLabel("folder.rescan")}）`}
+        >
+          <RefreshCw size={14} className={scanning ? "animate-spin" : ""} />
+          <span className="@max-2xl:hidden">{scanning ? "読み込み中…" : "読み直す"}</span>
+        </button>
+        <ThemeToggle />
+        <button
+          className={`${iconButton} ${detailsOpen ? "text-dim" : "text-accent"}`}
+          title={`詳細パネルを${detailsOpen ? "隠す" : "表示"}（${keyLabel("view.details")}）`}
+          aria-label={`詳細パネルを${detailsOpen ? "隠す" : "表示"}`}
+          onClick={() => runCommand("view.details")}
+        >
+          {detailsOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        </button>
+      </div>
+      <FilterRow display={<DisplayControls />} />
+    </header>
   );
 }
 
@@ -133,8 +141,8 @@ function SearchField() {
   const query = useStore((s) => s.query);
   const setQuery = useStore((s) => s.setQuery);
   return (
-    <label className="flex h-7 min-w-28 shrink-[4] basis-60 items-center gap-1.5 rounded-md border border-transparent bg-control px-2 focus-within:border-accent">
-      <Search size={13} className="shrink-0 text-dim" />
+    <label className="flex h-8 min-w-28 shrink-[4] basis-60 items-center gap-2 rounded-md border border-transparent bg-ink/7 px-2 focus-within:border-accent">
+      <Search size={14} className="shrink-0 text-dim" />
       <input
         id={SEARCH_FIELD}
         value={query}
@@ -163,6 +171,22 @@ function SearchField() {
         <X size={12} />
       </button>
     </label>
+  );
+}
+
+/** 外観を 1 回で切り替える（stockroom と同じ：システム → ライト → ダーク）。アイコンは今の選択。 */
+function ThemeToggle() {
+  const current = useStore((s) => s.appearance);
+  const next = nextAppearance(current);
+  return (
+    <button
+      className={`${iconButton} text-dim`}
+      title={`外観：${appearanceLabel(current)}（クリックで「${appearanceLabel(next)}」。${keyLabel("view.appearance")}）`}
+      aria-label={`外観を「${appearanceLabel(next)}」にする`}
+      onClick={() => runCommand("view.appearance")}
+    >
+      {current === "system" ? <Monitor size={16} /> : current === "light" ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
   );
 }
 
@@ -196,24 +220,67 @@ export const SORT_LABEL: Record<SortKey, string> = { name: "名前", place: "場
 export const COLUMN_LABEL: Record<Column, string> = { place: "場所", kind: "種類", date: "更新日", size: "大きさ", tags: "タグ" };
 
 /**
- * 表示のメニュー：並び順（グリッドには列の見出しが無いので、ここで選ぶ）と、リストの列の出し入れ。
+ * 帯の右端の、一覧の見せ方（stockroom の DisplayControls と同じ並び）：並び順と向き・一覧の形・表示のメニュー。
  */
+function DisplayControls() {
+  const recent = useStore((s) => s.place.kind === "recent");
+  const sort = useStore((s) => (s.place.kind === "recent" ? s.recentSort : s.sort));
+  const setSort = useStore((s) => s.setSort);
+  const label = (k: SortKey) => (recent && k === "date" ? "気付いた日" : SORT_LABEL[k]);
+  return (
+    <>
+      <div className="flex h-7 shrink-0 items-stretch gap-0.5">
+        {/* OS の select を、今の選択の名前の上に重ねる（名前が切れず、矢印も画面とそろう） */}
+        <label title={`並び順：${label(sort.key)}`} className="relative flex items-center gap-1.5 rounded-md pr-2 pl-2.5 whitespace-nowrap hover:bg-hover focus-within:ring-2 focus-within:ring-accent">
+          <ArrowUpDown size={13} className="text-dim" />
+          <span>{label(sort.key)}</span>
+          <ChevronDown size={13} className="text-dim" />
+          <select
+            aria-label="並び順"
+            value={sort.key}
+            onChange={(e) => {
+              const key = e.target.value as SortKey;
+              setSort({ key, desc: key === "date" || key === "size" });
+            }}
+            className="absolute inset-0 cursor-default opacity-0"
+          >
+            {SORT_KEYS.map((k) => (
+              <option key={k} value={k}>
+                {label(k)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          title={sort.desc ? "降順（押すと昇順）" : "昇順（押すと降順）"}
+          aria-label={sort.desc ? "降順" : "昇順"}
+          onClick={() => setSort({ ...sort, desc: !sort.desc })}
+          className="flex w-7 items-center justify-center rounded-md hover:bg-hover active:bg-press"
+        >
+          {sort.desc ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
+        </button>
+      </div>
+      <div className="mx-0.5 h-5 w-px shrink-0 bg-line" />
+      <LayoutSwitch />
+      <DisplayMenu />
+    </>
+  );
+}
+
+/** 表示のメニュー：リストの列の出し入れ。 */
 function DisplayMenu() {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const recent = useStore((s) => s.place.kind === "recent");
-  const sort = useStore((s) => (s.place.kind === "recent" ? s.recentSort : s.sort));
-  const setSort = useStore((s) => s.setSort);
   const layout = useStore((s) => s.prefs.layout);
   const columns = useStore((s) => s.prefs.columns);
   const toggleColumn = useStore((s) => s.toggleColumn);
-  const label = (k: SortKey) => (recent && k === "date" ? "気付いた日" : SORT_LABEL[k]);
   return (
     <>
       <button
         ref={button}
-        className={`${iconButton} ${open ? "bg-press" : ""}`}
-        title={`表示：${label(sort.key)}の${sort.desc ? "降順" : "昇順"}`}
+        className={`ghost flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${open ? "bg-press" : ""}`}
+        title="表示（リストの列）"
         aria-label="表示の設定"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -222,26 +289,6 @@ function DisplayMenu() {
       </button>
       {open && (
         <Popover anchor={button.current} onClose={() => setOpen(false)} width="w-52">
-          <MenuHeading>並び順</MenuHeading>
-          {SORT_KEYS.map((k) => (
-            <MenuOption key={k} single on={sort.key === k} onClick={() => setSort({ key: k, desc: sort.key === k ? sort.desc : k === "date" || k === "size" })}>
-              {label(k)}
-            </MenuOption>
-          ))}
-          <div className="mx-1 my-1 flex gap-0.5 rounded-md track">
-            {[false, true].map((desc) => (
-              <button
-                key={String(desc)}
-                aria-pressed={sort.desc === desc}
-                onClick={() => setSort({ ...sort, desc })}
-                className={`flex flex-1 items-center justify-center gap-1 rounded py-0.5 ${sort.desc === desc ? "thumb" : "text-fg/85 hover:bg-hover"}`}
-              >
-                {desc ? <ArrowDownWideNarrow size={13} /> : <ArrowUpNarrowWide size={13} />}
-                {desc ? "降順" : "昇順"}
-              </button>
-            ))}
-          </div>
-          <div className="my-1 h-px bg-line" />
           <MenuHeading>リストの列{layout === "grid" ? "（リストのとき）" : ""}</MenuHeading>
           <MenuOption on disabled onClick={() => {}}>
             名前

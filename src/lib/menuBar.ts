@@ -8,7 +8,9 @@
  * macOS では、入力欄のコピー・ペーストなどは「編集」メニューの項目が無いと効かないので、標準の項目を置く。
  */
 import { isTauri } from "@tauri-apps/api/core";
-import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
+import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
+import { useStore } from "../store";
+import type { Appearance } from "./appearance";
 import { command, isMac, keyLabel, runCommand, setMenuTakesMod } from "./commands";
 import { warn } from "./log";
 import { UPDATES } from "./update";
@@ -27,7 +29,27 @@ function item(id: string): Promise<MenuItem> {
 
 const sep = () => PredefinedMenuItem.new({ item: "Separator" });
 
-async function submenu(text: string, items: Promise<MenuItem | PredefinedMenuItem | Submenu>[]) {
+/** 外観の 3 つ（今のものに印）。ほかから変えたときも印を付け直す。 */
+const APPEARANCE_ITEMS: Appearance[] = ["system", "light", "dark"];
+async function appearanceItem(a: Appearance): Promise<CheckMenuItem> {
+  const id = `view.appearance.${a}`;
+  const sync = () => void it.setChecked(useStore.getState().appearance === a).catch(() => {});
+  // 押すとメニューが印を勝手に反転するので、押したあともストアに合わせ直す（同じものを押したときも）
+  const it: CheckMenuItem = await CheckMenuItem.new({
+    text: command(id).label,
+    checked: useStore.getState().appearance === a,
+    action: () => {
+      runCommand(id);
+      sync();
+    },
+  });
+  useStore.subscribe((s, prev) => {
+    if (s.appearance !== prev.appearance) sync();
+  });
+  return it;
+}
+
+async function submenu(text: string, items: Promise<MenuItem | PredefinedMenuItem | Submenu | CheckMenuItem>[]) {
   return Submenu.new({ text, items: await Promise.all(items) });
 }
 
@@ -94,6 +116,7 @@ async function build(): Promise<Menu> {
       sep(),
       item("folder.up"),
       sep(),
+      submenu("外観", APPEARANCE_ITEMS.map(appearanceItem)),
       item("view.appearance"),
     ]),
     ...(isMac
@@ -108,7 +131,7 @@ async function build(): Promise<Menu> {
           ]),
         ]
       : []),
-    submenu("ヘルプ", [item("help.log"), ...(isMac ? [] : [...(UPDATES ? [item("help.update")] : []), sep(), about()])]),
+    submenu("ヘルプ", [item("help.shortcuts"), sep(), item("help.log"), ...(isMac ? [] : [...(UPDATES ? [item("help.update")] : []), sep(), about()])]),
   ];
   return Menu.new({ items: await Promise.all(menus) });
 }
