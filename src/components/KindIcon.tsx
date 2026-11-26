@@ -32,11 +32,12 @@ const MARK: Record<IconKind, ReactNode> = {
   text: <path d="M5 8h6M5 10h6M5 12h3.5" />,
 };
 
-export function KindIcon({ ext, on = false }: { ext: string; on?: boolean }) {
-  const kind = iconKindOf(ext);
+/** `kind` を渡すと拡張子の代わりにそれで描く（条件のメニュー）。`size` はグリッドで大きく出すとき。 */
+export function KindIcon({ ext = "", kind: given, on = false, size = 16 }: { ext?: string; kind?: IconKind; on?: boolean; size?: number }) {
+  const kind = given ?? iconKindOf(ext);
   const color = `var(--color-kind-${kind})`;
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" className="shrink-0" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 16 16" className="shrink-0" aria-hidden="true">
       <path d={PAGE} fill={on ? "#fff" : color} />
       <path d={FOLD} fill={on ? color : "#fff"} fillOpacity={on ? 0.45 : 0.5} />
       <g fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ color: on ? color : "#fff" }}>
@@ -47,10 +48,10 @@ export function KindIcon({ ext, on = false }: { ext: string; on?: boolean }) {
 }
 
 /** 一覧のフォルダの行のアイコン。 */
-export function FolderIcon({ on = false }: { on?: boolean }) {
+export function FolderIcon({ on = false, size = 16 }: { on?: boolean; size?: number }) {
   const color = "var(--color-kind-folder)";
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" className="shrink-0" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 16 16" className="shrink-0" aria-hidden="true">
       <path d="M1.5 4a1 1 0 0 1 1-1h3.7l1.5 1.6h5.8a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill={on ? "#fff" : color} />
       <path d="M1.5 6.6h13V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill={on ? color : "#fff"} fillOpacity={on ? 0.3 : 0.22} />
     </svg>

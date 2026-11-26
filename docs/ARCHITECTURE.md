@@ -11,7 +11,7 @@
 
 | 層 | 場所 | 役目 |
 |---|---|---|
-| 画面 | `src/` | React。部品は `src/components/`（サイドバー・一覧・詳細パネル・ドラッグ）。状態は `src/store.ts`（データベースの写し。`files-changed` と自分の変更のあとに読み直す）。絞り込みと並べ替えは画面の中だけで行う（`src/lib/view.ts`。読んだ行 `allFiles` から一覧の行 `files` を作る）。操作は `src/lib/commands.ts` の表から |
+| 画面 | `src/` | React。部品は `src/components/`（サイドバー・ツールバー・条件の行・一覧（リスト `FileList.tsx`・グリッド `FileGrid.tsx`）・詳細パネル・ドラッグ）。状態は `src/store.ts`（データベースの写し。`files-changed` と自分の変更のあとに読み直す）。絞り込みと並べ替えは画面の中だけで行う（`src/lib/view.ts`。読んだ行 `allFiles` から一覧の行 `files` を作る。条件のメニューの件数も同じ）。並べ替え・一覧の形・列・パネルの開け閉めと幅は、この端末の localStorage に覚える（`view.ts` の `loadSort`・`loadPrefs`）。操作は `src/lib/commands.ts` の表から |
 | 呼び出し | `src/lib/api.ts` | Rust のコマンドのラッパ。ブラウザでは `src/dev/mockBackend.ts` が代わりに答える |
 | コマンド | `src-tauri/src/commands.rs` | 画面から呼ばれる入口 |
 | データ | `src-tauri/src/db.rs` | `app_data_dir()/bindery.db`（SQLite）。表は `roots`（登録フォルダ。`recursive` でサブフォルダまで読むか、`scanned` で登録してから 1 度読んだか）・`files`（見つけたファイル。`dir` は登録フォルダから見た中のフォルダ、`note` はメモ、`changed_at`・`change_kind` はアプリが変化に気付いた日時と中身）・`tags` と `file_tags`・`vfolders`（`parent_id` で入れ子）と `vfolder_files`。版は `PRAGMA user_version` と `SCHEMA` の手順 |

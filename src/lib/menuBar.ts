@@ -85,7 +85,17 @@ async function build(): Promise<Menu> {
       item("file.relink"),
       item("file.forget"),
     ]),
-    submenu("表示", [item("folder.up"), sep(), item("view.appearance")]),
+    submenu("表示", [
+      item("view.grid"),
+      item("view.list"),
+      sep(),
+      item("view.sidebar"),
+      item("view.details"),
+      sep(),
+      item("folder.up"),
+      sep(),
+      item("view.appearance"),
+    ]),
     ...(isMac
       ? [
           submenu("ウィンドウ", [

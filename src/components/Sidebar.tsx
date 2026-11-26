@@ -26,7 +26,7 @@ export function Sidebar() {
   const createFolder = useStore((s) => s.createFolder);
 
   return (
-    <nav className="vibrant flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-panel px-2 pb-3" {...dragRegion(true)}>
+    <nav className="vibrant flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-panel px-2 pb-3" {...dragRegion(true)}>
       <div className="h-[var(--titlebar)] shrink-0" />
       <Section>
         <PlaceRow place={{ kind: "all" }} icon={<Layers size={15} />} label="すべてのファイル" />

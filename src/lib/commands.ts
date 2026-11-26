@@ -25,6 +25,8 @@ let appearance: Appearance = "system";
 /** 絞り込みの入力欄の id。 */
 export const SEARCH_FIELD = "bindery-search";
 const st = () => useStore.getState();
+const grid = () => st().prefs.layout === "grid";
+const rowStep = () => (grid() ? st().gridCols : 1);
 
 export const COMMANDS: Command[] = [
   // ファイル
@@ -66,10 +68,15 @@ export const COMMANDS: Command[] = [
     },
   },
   { id: "select.none", label: "選ぶのをやめる", keys: ["Escape"], run: () => st().clearSelection() },
-  { id: "select.down", label: "次", keys: ["ArrowDown"], run: () => st().step(1, false) },
-  { id: "select.up", label: "前", keys: ["ArrowUp"], run: () => st().step(-1, false) },
-  { id: "select.downMore", label: "次まで選ぶ", keys: ["Shift+ArrowDown"], run: () => st().step(1, true) },
-  { id: "select.upMore", label: "前まで選ぶ", keys: ["Shift+ArrowUp"], run: () => st().step(-1, true) },
+  // グリッドでは、上下は 1 行（その行の数）ずつ、左右は 1 つずつ動く
+  { id: "select.down", label: "次", keys: ["ArrowDown"], run: () => st().step(rowStep(), false) },
+  { id: "select.up", label: "前", keys: ["ArrowUp"], run: () => st().step(-rowStep(), false) },
+  { id: "select.downMore", label: "次まで選ぶ", keys: ["Shift+ArrowDown"], run: () => st().step(rowStep(), true) },
+  { id: "select.upMore", label: "前まで選ぶ", keys: ["Shift+ArrowUp"], run: () => st().step(-rowStep(), true) },
+  { id: "select.right", label: "右", keys: ["ArrowRight"], run: () => grid() && st().step(1, false) },
+  { id: "select.left", label: "左", keys: ["ArrowLeft"], run: () => grid() && st().step(-1, false) },
+  { id: "select.rightMore", label: "右まで選ぶ", keys: ["Shift+ArrowRight"], run: () => grid() && st().step(1, true) },
+  { id: "select.leftMore", label: "左まで選ぶ", keys: ["Shift+ArrowLeft"], run: () => grid() && st().step(-1, true) },
 
   // 整理
   { id: "tag.new", label: "新しいタグ", run: () => st().setEditing({ kind: "newTag" }) },
@@ -105,6 +112,12 @@ export const COMMANDS: Command[] = [
   { id: "folder.up", label: "上のフォルダへ", keys: ["Mod+ArrowUp"], run: () => st().goUp() },
   { id: "folder.rescan", label: "読み直す", keys: ["Mod+R"], inFields: true, run: () => void api.rescan() },
 
+  // 表示（docs/CONCEPT.md「ツールバーと表示の切り替え」）
+  { id: "view.grid", label: "グリッド", keys: ["Mod+1"], run: () => st().setLayout("grid") },
+  { id: "view.list", label: "リスト", keys: ["Mod+2"], run: () => st().setLayout("list") },
+  { id: "view.sidebar", label: "サイドバーを表示／隠す", keys: ["Mod+Alt+S"], inFields: true, run: () => st().toggleSidebar() },
+  { id: "view.details", label: "詳細パネルを表示／隠す", keys: ["Mod+Alt+I"], inFields: true, run: () => st().toggleDetails() },
+
   // 表示・ヘルプ
   {
     id: "view.appearance",
@@ -138,7 +151,9 @@ function matches(keys: string, e: KeyboardEvent): boolean {
   const key = last === "Space" ? " " : last;
   const want = new Set(parts);
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  const same = key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() : e.key === key;
+  // ⌥ を押すと macOS では e.key が別の文字になるので、1 文字のキーは物理キー（e.code）でも見る
+  const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : null;
+  const same = key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() || e.code === code : e.key === key;
   return same && mod === want.has("Mod") && e.shiftKey === want.has("Shift") && e.altKey === want.has("Alt");
 }
 

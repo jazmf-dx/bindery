@@ -7,7 +7,29 @@ import { create } from "zustand";
 import { api, type FileRow, type Place, type Root, type Tag, type VFolder } from "./lib/api";
 import { EXTENSIONS, kindOfPath } from "./lib/kinds";
 import { warn } from "./lib/log";
-import { childDirs, hasFilters, loadSort, nextSort, NO_FILTERS, parentDir, RECENT_SORT, saveSort, visible, type Filters, type Sort, type SortKey, type SubDir } from "./lib/view";
+import {
+  childDirs,
+  clampWidth,
+  COLUMNS,
+  hasFilters,
+  loadPrefs,
+  loadSort,
+  nextSort,
+  NO_FILTERS,
+  parentDir,
+  RECENT_SORT,
+  savePrefs,
+  saveSort,
+  visible,
+  type Column,
+  type Filters,
+  type Layout,
+  type Panel,
+  type Prefs,
+  type Sort,
+  type SortKey,
+  type SubDir,
+} from "./lib/view";
 
 export const samePlace = (a: Place, b: Place) =>
   a.kind === b.kind && ("id" in a ? a.id : null) === ("id" in b ? b.id : null) && ("dir" in a ? a.dir : null) === ("dir" in b ? b.dir : null);
@@ -55,12 +77,24 @@ type State = {
   recentCount: number;
   drag: Drag | null;
   editing: Editing | null;
+  /** 画面の設定（一覧の形・リストの列・左右のパネル）。この端末で覚える。 */
+  prefs: Prefs;
+  /** グリッドの 1 行の数（グリッドが幅から決める。上下の矢印で動く数）。 */
+  gridCols: number;
 
   load: () => Promise<void>;
   go: (place: Place) => void;
   setQuery: (query: string) => void;
   setFilters: (filters: Filters) => void;
   sortBy: (key: SortKey) => void;
+  /** 並べ替えを決めて置く（表示のメニューから）。 */
+  setSort: (sort: Sort) => void;
+  setLayout: (layout: Layout) => void;
+  toggleColumn: (column: Column) => void;
+  toggleSidebar: () => void;
+  toggleDetails: () => void;
+  setPanelWidth: (panel: Panel, px: number) => void;
+  setGridCols: (n: number) => void;
   click: (id: number, e: { shift: boolean; toggle: boolean }) => void;
   /** 一覧のフォルダの行を選ぶ。 */
   focusDir: (path: string) => void;
@@ -110,6 +144,13 @@ type State = {
   moveFolder: (id: number, parentId: number | null) => Promise<void>;
 };
 
+/** 画面の設定を変えて覚える。 */
+function setPrefs(change: Partial<Prefs>) {
+  const prefs = { ...useStore.getState().prefs, ...change };
+  useStore.setState({ prefs });
+  savePrefs(prefs);
+}
+
 /** 読み込みが終わったら選ぶファイルのパス（落としたファイルの登録）。見つけたら、または読み込みが終わったら空にする。 */
 let pendingSelect: string[] = [];
 
@@ -156,6 +197,8 @@ export const useStore = create<State>((set, get) => ({
   recentCount: 0,
   drag: null,
   editing: null,
+  prefs: loadPrefs(),
+  gridCols: 1,
 
   // 読み直しが重なったら、終わったあとに 1 回だけもう一度読む（届いた知らせを取りこぼさない）。
   load: () => {
@@ -252,6 +295,26 @@ export const useStore = create<State>((set, get) => ({
     const sort = nextSort(s.sort, key);
     saveSort(sort);
     set({ sort, ...refresh({ ...s, sort }) });
+  },
+
+  setSort: (sort) => {
+    const s = get();
+    if (s.place.kind === "recent") return set({ recentSort: sort, ...refresh({ ...s, recentSort: sort }) });
+    saveSort(sort);
+    set({ sort, ...refresh({ ...s, sort }) });
+  },
+
+  setLayout: (layout) => setPrefs({ layout }),
+  toggleColumn: (column) => {
+    const { columns } = get().prefs;
+    // 列の並びはいつも同じ（足した順にしない）
+    setPrefs({ columns: COLUMNS.filter((c) => (c === column ? !columns.includes(c) : columns.includes(c))) });
+  },
+  toggleSidebar: () => setPrefs({ sidebarOpen: !get().prefs.sidebarOpen }),
+  toggleDetails: () => setPrefs({ detailsOpen: !get().prefs.detailsOpen }),
+  setPanelWidth: (panel, px) => setPrefs(panel === "sidebar" ? { sidebarWidth: clampWidth(panel, px) } : { detailsWidth: clampWidth(panel, px) }),
+  setGridCols: (gridCols) => {
+    if (get().gridCols !== gridCols) set({ gridCols });
   },
 
   click: (id, { shift, toggle }) => {

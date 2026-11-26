@@ -7,263 +7,95 @@
  * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
  * 登録フォルダ・中のフォルダを開いているときは、先頭に中のフォルダの行を出す（ダブルクリック・Enter で入る、⌘↑ で上へ）。
  */
+/**
+ * 一覧（docs/CONCEPT.md「一覧」「ツールバーと表示の切り替え」）。リストとグリッドを切り替える。
+ * リストは名前と、表示のメニューで選んだ列（場所・種類・更新日・大きさ・タグ）。グリッドは FileGrid.tsx。
+ * 選ぶ：クリック、⌘/Ctrl クリックで足す・外す、Shift クリックで範囲。ダブルクリックで開く。
+ * 行をドラッグして、サイドバーの仮想フォルダ・タグへ落とせる（DragLayer.tsx）。
+ * 列の見出しを押すと並べ替える（docs/CONCEPT.md「探す」）。
+ * 行を右クリックすると OS のメニューを出す（contextMenu.ts）。
+ * 登録フォルダ・中のフォルダを開いているときは、先頭に中のフォルダの行を出す（ダブルクリック・Enter で入る、⌘↑ で上へ）。
+ */
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, RefreshCw, Search, StickyNote, Tag as TagIcon, X } from "lucide-react";
+import { ArrowDown, ArrowUp, StickyNote } from "lucide-react";
 import type { FileRow, Root } from "../lib/api";
-import { keyLabel, runCommand, SEARCH_FIELD } from "../lib/commands";
+import { runCommand } from "../lib/commands";
 import { cmd, openMenu, type Entry } from "../lib/contextMenu";
-import { composing } from "../lib/ime";
-import { formatDate, kindLabel, kindName, KINDS, relativeDir, type Kind } from "../lib/kinds";
-import { dragRegion } from "../lib/titleBar";
-import { hasFilters, NO_FILTERS, type SortKey, type SubDir, type Within } from "../lib/view";
+import { formatDate, formatSize, kindLabel, relativeDir } from "../lib/kinds";
+import { hasFilters, type Column, type SortKey, type SubDir } from "../lib/view";
 import { folderPath, useStore } from "../store";
+import { FileGrid } from "./FileGrid";
 import { FolderIcon, KindIcon } from "./KindIcon";
 import { rootMenu } from "./Sidebar";
+import { COLUMN_LABEL } from "./Toolbar";
 
 const isMac = navigator.userAgent.includes("Mac");
-const COLS = "grid-cols-[minmax(0,3fr)_minmax(0,2fr)_8rem_10.5rem_minmax(0,1.5fr)]";
 const ROW_H = 28;
 
-function placeTitle(): string {
-  const { place, roots, tags, vfolders } = useStore.getState();
-  switch (place.kind) {
-    case "all":
-      return "すべてのファイル";
-    case "unsorted":
-      return "未整理";
-    case "missing":
-      return "行方不明";
-    case "recent":
-      return "最近の変更";
-    case "root":
-      return roots.find((r) => r.id === place.id)?.name ?? "";
-    case "tag":
-      return `タグ：${tags.find((t) => t.id === place.id)?.name ?? ""}`;
-    case "folder":
-      return folderPath(vfolders, place.id);
-  }
+/** 列の幅。名前の列はいつも先頭に出す。 */
+const WIDTH: Record<"name" | Column, string> = {
+  name: "minmax(0,3fr)",
+  place: "minmax(0,2fr)",
+  kind: "8rem",
+  date: "10.5rem",
+  size: "5.5rem",
+  tags: "minmax(0,1.5fr)",
+};
+
+const SORT_OF: Partial<Record<Column, SortKey>> = { place: "place", kind: "kind", date: "date", size: "size" };
+
+/** 出す列（名前のあと。表示のメニューで選んだもの）と、その grid の幅の指定。 */
+function useColumns(): { columns: Column[]; template: string } {
+  const columns = useStore((s) => s.prefs.columns);
+  return { columns, template: ["name" as const, ...columns].map((c) => WIDTH[c]).join(" ") };
 }
-
-/**
- * 見出しの場所の名前。中のフォルダでは「登録フォルダ › 中 › 中」と出し、上の階層を押すとそこへ移る。
- */
-function Title() {
-  const place = useStore((s) => s.place);
-  const go = useStore((s) => s.go);
-  if (place.kind !== "root" || !place.dir) return <span className="truncate font-semibold">{placeTitle()}</span>;
-  const parts = place.dir.split("/");
-  const crumb = (label: string, dir: string) => (
-    <button key={dir} className="ghost min-w-0 shrink truncate rounded px-1 text-dim" title={`${label}へ`} onClick={() => go({ kind: "root", id: place.id, dir })}>
-      {label}
-    </button>
-  );
-  return (
-    <span className="-ml-1 flex min-w-0 items-center gap-0.5 font-semibold">
-      {crumb(placeTitle(), "")}
-      {parts.slice(0, -1).map((p, i) => (
-        <span key={i} className="flex min-w-0 shrink items-center gap-0.5">
-          <span className="text-dim">›</span>
-          {crumb(p, parts.slice(0, i + 1).join("/"))}
-        </span>
-      ))}
-      <span className="text-dim">›</span>
-      <span className="min-w-0 truncate px-1">{parts[parts.length - 1]}</span>
-    </span>
-  );
-}
-
-export function Header() {
-  // 場所や名前が変わったときも見出しを変える
-  useStore((s) => s.place);
-  useStore((s) => s.roots);
-  useStore((s) => s.tags);
-  useStore((s) => s.vfolders);
-  const count = useStore((s) => s.files.length);
-  const total = useStore((s) => s.allFiles.length);
-  const narrowed = useStore((s) => s.query.trim() !== "" || hasFilters(s.filters));
-  const selected = useStore((s) => s.selected.length);
-  const scanning = useStore((s) => s.scanning);
-  return (
-    <div className="shrink-0 border-b border-line px-4 pt-[var(--titlebar)]" {...dragRegion(true)}>
-      <div className="flex h-10 items-center gap-3">
-        <Title />
-        <span className="shrink-0 text-dim tabular-nums">
-          {narrowed ? `${count} / ${total} 件` : `${count} 件`}
-          {selected > 1 ? `（${selected} 件を選択）` : ""}
-        </span>
-        <span className="flex-1" />
-        <SearchField />
-        {/* 読み込み中の印と［読み直す］は同じ場所に置き、幅も同じにする */}
-        <button className="ghost flex w-28 shrink-0 items-center justify-end gap-1.5 rounded-md px-2 py-1 text-dim" onClick={() => runCommand("folder.rescan")} disabled={scanning}>
-          <RefreshCw size={13} className={scanning ? "animate-spin" : ""} />
-          {scanning ? "読み込み中…" : "読み直す"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** 今の場所の中を絞り込む欄。Esc で空にし、空ならやめる。 */
-function SearchField() {
-  const query = useStore((s) => s.query);
-  const setQuery = useStore((s) => s.setQuery);
-  return (
-    <label className="flex w-56 shrink-0 items-center gap-1.5 rounded-md border border-edge bg-field px-2 py-0.5 focus-within:border-accent">
-      <Search size={13} className="shrink-0 text-dim" />
-      <input
-        id={SEARCH_FIELD}
-        value={query}
-        placeholder={`絞り込む（${keyLabel("find")}）`}
-        title="名前・場所・タグ・メモで、今の場所の中を絞り込みます"
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (composing(e)) return;
-          if (e.key === "Escape") {
-            if (query) setQuery("");
-            else e.currentTarget.blur();
-            e.stopPropagation();
-          }
-          // 絞り込んだ一覧へ移る
-          if (e.key === "Enter" || e.key === "ArrowDown") {
-            e.currentTarget.blur();
-            e.preventDefault();
-            const st = useStore.getState();
-            if (st.selected.length === 0) st.step(1, false);
-          }
-        }}
-        className="min-w-0 flex-1 bg-transparent py-0.5 outline-none"
-      />
-      {query && (
-        <button aria-label="絞り込みをやめる" title="絞り込みをやめる" className="ghost rounded p-0.5 text-dim" onClick={() => setQuery("")}>
-          <X size={12} />
-        </button>
-      )}
-    </label>
-  );
-}
-
-const WITHIN: { value: Within; label: string }[] = [
-  { value: "today", label: "今日" },
-  { value: 7, label: "7 日以内" },
-  { value: 30, label: "30 日以内" },
-  { value: 365, label: "1 年以内" },
-];
-
-/**
- * 条件の行：タグ（すべて付いているもの）・種類・更新日で、今の場所の中を絞る（docs/CONCEPT.md「条件の組み合わせ」）。
- * 条件が無いときも同じ高さで出す（一覧の位置を変えない）。
- */
-export function ConditionBar() {
-  const filters = useStore((s) => s.filters);
-  const tags = useStore((s) => s.tags);
-  const setFilters = useStore((s) => s.setFilters);
-  const chosen = tags.filter((t) => filters.tags.includes(t.id));
-  const left = tags.filter((t) => !filters.tags.includes(t.id));
-  const select = "rounded-md border border-edge bg-field px-1.5 py-0.5 outline-none focus:border-accent";
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-2 overflow-x-auto border-b border-line px-4 text-[12px]">
-      <span className="shrink-0 text-dim">条件</span>
-      {chosen.map((t) => (
-        <span key={t.id} className="flex shrink-0 items-center gap-1 rounded-md bg-control py-0.5 pr-0.5 pl-1.5">
-          <TagIcon size={11} />
-          {t.name}
-          <button aria-label={`タグ「${t.name}」の条件を外す`} className="ghost rounded p-0.5" onClick={() => setFilters({ ...filters, tags: filters.tags.filter((id) => id !== t.id) })}>
-            <X size={11} />
-          </button>
-        </span>
-      ))}
-      <select
-        aria-label="タグの条件を足す"
-        value=""
-        disabled={left.length === 0}
-        onChange={(e) => e.target.value && setFilters({ ...filters, tags: [...filters.tags, Number(e.target.value)] })}
-        className={`${select} shrink-0 disabled:off`}
-      >
-        <option value="">{chosen.length ? "＋ かつ タグ…" : "タグ…"}</option>
-        {left.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label="種類の条件"
-        value={filters.kind ?? ""}
-        onChange={(e) => setFilters({ ...filters, kind: (e.target.value || null) as Kind | null })}
-        className={`${select} shrink-0 ${filters.kind ? "border-accent" : ""}`}
-      >
-        <option value="">すべての種類</option>
-        {KINDS.map((k) => (
-          <option key={k} value={k}>
-            {kindName(k)}
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label="更新日の条件"
-        value={filters.within ?? ""}
-        onChange={(e) => {
-          const v = e.target.value;
-          setFilters({ ...filters, within: v === "" ? null : v === "today" ? "today" : (Number(v) as Within) });
-        }}
-        className={`${select} shrink-0 ${filters.within !== null ? "border-accent" : ""}`}
-      >
-        <option value="">いつ更新したものでも</option>
-        {WITHIN.map((w) => (
-          <option key={w.value} value={w.value}>
-            更新日が{w.label}
-          </option>
-        ))}
-      </select>
-      <span className="flex-1" />
-      {hasFilters(filters) && (
-        <button className="ghost shrink-0 rounded px-1.5 py-0.5 text-dim" onClick={() => setFilters(NO_FILTERS)}>
-          条件を外す
-        </button>
-      )}
-    </div>
-  );
-}
-
-const COLUMNS: { label: string; key?: SortKey }[] = [
-  { label: "名前", key: "name" },
-  { label: "場所", key: "place" },
-  { label: "種類", key: "kind" },
-  { label: "更新日", key: "date" },
-  { label: "タグ" },
-];
 
 /** 列の見出し。押すと並べ替える（同じ列をもう一度押すと逆に）。 */
-function ColumnHeads() {
+function ColumnHeads({ columns, template }: { columns: Column[]; template: string }) {
   const recent = useStore((s) => s.place.kind === "recent");
   const sort = useStore((s) => (s.place.kind === "recent" ? s.recentSort : s.sort));
   const sortBy = useStore((s) => s.sortBy);
+  const head = (label: string, key: SortKey | undefined, right = false) => {
+    if (!key) return <span key={label} className="truncate py-0.5">{label}</span>;
+    const on = sort.key === key;
+    const Arrow = sort.desc ? ArrowDown : ArrowUp;
+    return (
+      <button
+        key={label}
+        className={`ghost -mx-1 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 ${right ? "flex-row-reverse text-right" : "text-left"}`}
+        title={`${label}で並べ替える`}
+        onClick={() => sortBy(key)}
+      >
+        <span className={`truncate ${on ? "text-fg" : ""}`}>{label}</span>
+        {on && <Arrow size={11} className="shrink-0 text-fg" />}
+      </button>
+    );
+  };
   return (
-    <div className={`grid shrink-0 ${COLS} gap-3 border-b border-line px-4 py-1 text-[11px] font-semibold text-dim`}>
-      {COLUMNS.map((c) => {
-        // 「最近の変更」では、日付の列は気付いた日
-        const label = recent && c.key === "date" ? "気付いた日" : c.label;
-        if (!c.key) return <span key={c.label} className="py-0.5">{label}</span>;
-        const on = sort.key === c.key;
-        const Arrow = sort.desc ? ArrowDown : ArrowUp;
-        return (
-          <button
-            key={c.label}
-            className="ghost -mx-1 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left"
-            title={`${label}で並べ替える`}
-            onClick={() => sortBy(c.key!)}
-          >
-            <span className={`truncate ${on ? "text-fg" : ""}`}>{label}</span>
-            {on && <Arrow size={11} className="shrink-0 text-fg" />}
-          </button>
-        );
-      })}
+    <div className="grid shrink-0 gap-3 border-b border-line px-4 py-1 text-[11px] font-semibold text-dim" style={{ gridTemplateColumns: template }}>
+      {head("名前", "name")}
+      {/* 「最近の変更」では、日付の列は気付いた日 */}
+      {columns.map((c) => head(recent && c === "date" ? "気付いた日" : COLUMN_LABEL[c], SORT_OF[c], c === "size"))}
     </div>
   );
 }
 
 export function FileList() {
+  const layout = useStore((s) => s.prefs.layout);
+  const empty = useStore((s) => s.files.length + s.subdirs.length === 0);
+  if (layout === "grid")
+    return empty ? (
+      <div className="min-h-0 flex-1">
+        <EmptyList />
+      </div>
+    ) : (
+      <FileGrid />
+    );
+  return <ListView empty={empty} />;
+}
+
+function ListView({ empty }: { empty: boolean }) {
   const files = useStore((s) => s.files);
   const subdirs = useStore((s) => s.subdirs);
   const dirFocus = useStore((s) => s.dirFocus);
@@ -271,6 +103,7 @@ export function FileList() {
   const tags = useStore((s) => s.tags);
   const place = useStore((s) => s.place);
   const selected = useStore((s) => s.selected);
+  const { columns, template } = useColumns();
   const scroller = useRef<HTMLDivElement>(null);
   // 行は、先頭のフォルダの行に続けてファイルの行
   const v = useVirtualizer({ count: subdirs.length + files.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
@@ -281,22 +114,33 @@ export function FileList() {
   // 矢印キーで選んだ行が見えるように
   const last = selected[selected.length - 1];
   useEffect(() => {
-    const i = dirFocus !== null ? subdirs.findIndex((d) => d.path === dirFocus) : last === undefined ? -1 : subdirs.length + files.findIndex((f) => f.id === last);
-    if (i >= 0 && (dirFocus !== null || i >= subdirs.length)) v.scrollToIndex(i, { align: "auto" });
+    const i = focusIndex(subdirs, files, dirFocus, last);
+    if (i >= 0) v.scrollToIndex(i, { align: "auto" });
   }, [last, dirFocus, files, subdirs, v]);
 
   return (
     <>
-      <ColumnHeads />
+      <ColumnHeads columns={columns} template={template} />
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && useStore.getState().clearSelection()}>
-        {files.length + subdirs.length === 0 ? (
+        {empty ? (
           <EmptyList />
         ) : (
           <div style={{ height: v.getTotalSize(), position: "relative" }}>
             {v.getVirtualItems().map((row) => {
               if (row.index < subdirs.length) {
                 const d = subdirs[row.index];
-                return <DirLine key={`dir:${d.path}`} dir={d} top={row.start} on={dirFocus === d.path} where={place.kind === "root" ? place.dir : ""} rootId={root?.id ?? 0} />;
+                return (
+                  <DirLine
+                    key={`dir:${d.path}`}
+                    dir={d}
+                    top={row.start}
+                    on={dirFocus === d.path}
+                    where={place.kind === "root" ? place.dir : ""}
+                    rootId={root?.id ?? 0}
+                    columns={columns}
+                    template={template}
+                  />
+                );
               }
               const f = files[row.index - subdirs.length];
               return (
@@ -306,8 +150,10 @@ export function FileList() {
                   top={row.start}
                   on={chosen.has(f.id)}
                   recent={place.kind === "recent"}
-                  where={place.kind === "root" ? relativeDir(root?.path ?? "", f.path) : joinPlace(roots, f)}
+                  where={placeOf(roots, place.kind === "root" ? root : undefined, f)}
                   tagNames={f.tags.map((id) => tagName.get(id) ?? "").filter(Boolean)}
+                  columns={columns}
+                  template={template}
                 />
               );
             })}
@@ -318,74 +164,156 @@ export function FileList() {
   );
 }
 
-function FileLine({ file: f, top, on, recent, where, tagNames }: { file: FileRow; top: number; on: boolean; recent: boolean; where: string; tagNames: string[] }) {
+/** 選んでいる行（フォルダの行か、最後に選んだファイル）の、一覧の中の位置。無ければ -1。 */
+export function focusIndex(subdirs: SubDir[], files: FileRow[], dirFocus: string | null, last: number | undefined): number {
+  if (dirFocus !== null) return subdirs.findIndex((d) => d.path === dirFocus);
+  if (last === undefined) return -1;
+  const i = files.findIndex((f) => f.id === last);
+  return i < 0 ? -1 : subdirs.length + i;
+}
+
+/** 場所の欄：登録フォルダを開いているときは中のフォルダだけ、ほかでは「登録フォルダ名 › 中のフォルダ」。 */
+export function placeOf(roots: Root[], openRoot: Root | undefined, f: FileRow): string {
+  if (f.missing) return "（行方不明）";
+  return openRoot ? relativeDir(openRoot.path, f.path) : joinPlace(roots, f);
+}
+
+/** ファイルの行・枠を押したとき（リストとグリッドで同じ）。 */
+export function pressFile(e: React.MouseEvent, f: FileRow, on: boolean) {
+  if (e.button !== 0) return;
+  const toggle = isMac ? e.metaKey : e.ctrlKey;
+  const st = useStore.getState();
+  // 選んである行を押したときは、ドラッグかもしれないので、離したときに選び直す
+  if (!(on && !toggle && !e.shiftKey)) st.click(f.id, { shift: e.shiftKey, toggle });
+  startDrag(e.clientX, e.clientY, f.id, on && !toggle && !e.shiftKey);
+}
+
+/** ファイルの行・枠を右クリックしたとき。選んでいない行なら、その行を選んでから（Finder と同じ）。 */
+export function fileContextMenu(e: React.MouseEvent, f: FileRow) {
+  const st = useStore.getState();
+  if (!st.selected.includes(f.id)) st.click(f.id, { shift: false, toggle: false });
+  openMenu(e, fileMenu);
+}
+
+/** 中のフォルダの行・枠を右クリックしたとき。 */
+export function dirContextMenu(e: React.MouseEvent, path: string, rootId: number) {
+  const st = useStore.getState();
+  st.focusDir(path);
+  const root = st.roots.find((r) => r.id === rootId);
+  if (root) openMenu(e, () => [{ label: "開く", run: () => st.enterDir(path) }, "-", ...rootMenu(root, path)]);
+}
+
+function FileLine({
+  file: f,
+  top,
+  on,
+  recent,
+  where,
+  tagNames,
+  columns,
+  template,
+}: {
+  file: FileRow;
+  top: number;
+  on: boolean;
+  recent: boolean;
+  where: string;
+  tagNames: string[];
+  columns: Column[];
+  template: string;
+}) {
+  const dim = on ? "" : "text-dim";
+  const cell = (c: Column) => {
+    switch (c) {
+      case "place":
+        return (
+          <span key={c} className={`truncate ${dim}`} title={f.path}>
+            {where}
+          </span>
+        );
+      case "kind":
+        return (
+          <span key={c} className={`truncate ${dim}`}>
+            {kindLabel(f.ext)}
+          </span>
+        );
+      case "date":
+        return recent ? (
+          <span key={c} className={`flex min-w-0 items-center gap-1.5 tabular-nums ${dim}`} title={`更新日：${formatDate(f.mtime)}`}>
+            <ChangeBadge change={f.change} on={on} />
+            <span className="truncate">{formatDate(f.changedAt ?? 0)}</span>
+          </span>
+        ) : (
+          <span key={c} className={`truncate tabular-nums ${dim}`}>
+            {formatDate(f.mtime)}
+          </span>
+        );
+      case "size":
+        return (
+          <span key={c} className={`truncate text-right tabular-nums ${dim}`}>
+            {formatSize(f.size)}
+          </span>
+        );
+      case "tags":
+        return (
+          <span key={c} className="flex min-w-0 gap-1 overflow-hidden">
+            {tagNames.map((n) => (
+              <span key={n} className={`shrink-0 rounded px-1.5 text-[11px] ${on ? "bg-white/20" : "bg-control"}`}>
+                {n}
+              </span>
+            ))}
+          </span>
+        );
+    }
+  };
   return (
     <div
-      onMouseDown={(e) => {
-        if (e.button !== 0) return;
-        const toggle = isMac ? e.metaKey : e.ctrlKey;
-        const st = useStore.getState();
-        // 選んである行を押したときは、ドラッグかもしれないので、離したときに選び直す
-        if (!(on && !toggle && !e.shiftKey)) st.click(f.id, { shift: e.shiftKey, toggle });
-        startDrag(e.clientX, e.clientY, f.id, on && !toggle && !e.shiftKey);
-      }}
+      onMouseDown={(e) => pressFile(e, f, on)}
       onDoubleClick={() => runCommand("file.open")}
-      onContextMenu={(e) => {
-        // 選んでいない行なら、その行を選んでから（Finder と同じ）
-        const st = useStore.getState();
-        if (!st.selected.includes(f.id)) st.click(f.id, { shift: false, toggle: false });
-        openMenu(e, fileMenu);
-      }}
-      className={`absolute inset-x-0 grid ${COLS} items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"} ${f.missing ? "opacity-60" : ""}`}
-      style={{ top, height: ROW_H }}
+      onContextMenu={(e) => fileContextMenu(e, f)}
+      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"} ${f.missing ? "opacity-60" : ""}`}
+      style={{ top, height: ROW_H, gridTemplateColumns: template }}
     >
       <span className="flex min-w-0 items-center gap-2">
         <KindIcon ext={f.ext} on={on} />
         <span className="truncate">{f.name}</span>
         {f.note && (
-          <span className={`shrink-0 ${on ? "" : "text-dim"}`} title={f.note}>
+          <span className={`shrink-0 ${dim}`} title={f.note}>
             <StickyNote size={12} aria-label="メモあり" />
           </span>
         )}
       </span>
-      <span className={`truncate ${on ? "" : "text-dim"}`} title={f.path}>
-        {f.missing ? "（行方不明）" : where}
-      </span>
-      <span className={`truncate ${on ? "" : "text-dim"}`}>{kindLabel(f.ext)}</span>
-      {recent ? (
-        <span className={`flex min-w-0 items-center gap-1.5 tabular-nums ${on ? "" : "text-dim"}`} title={`更新日：${formatDate(f.mtime)}`}>
-          <ChangeBadge change={f.change} on={on} />
-          <span className="truncate">{formatDate(f.changedAt ?? 0)}</span>
-        </span>
-      ) : (
-        <span className={`tabular-nums ${on ? "" : "text-dim"}`}>{formatDate(f.mtime)}</span>
-      )}
-      <span className="flex min-w-0 gap-1 overflow-hidden">
-        {tagNames.map((n) => (
-          <span key={n} className={`shrink-0 rounded px-1.5 text-[11px] ${on ? "bg-white/20" : "bg-control"}`}>
-            {n}
-          </span>
-        ))}
-      </span>
+      {columns.map(cell)}
     </div>
   );
 }
 
-/** 中のフォルダの行。ダブルクリックで入る。列は名前（と中のファイルの数）・場所・種類だけ。 */
-function DirLine({ dir, top, on, where, rootId }: { dir: SubDir; top: number; on: boolean; where: string; rootId: number }) {
+/** 中のフォルダの行。ダブルクリックで入る。出すのは名前（と中のファイルの数）・場所・種類だけ。 */
+function DirLine({
+  dir,
+  top,
+  on,
+  where,
+  rootId,
+  columns,
+  template,
+}: {
+  dir: SubDir;
+  top: number;
+  on: boolean;
+  where: string;
+  rootId: number;
+  columns: Column[];
+  template: string;
+}) {
   const dim = on ? "" : "text-dim";
   return (
     <div
       onMouseDown={(e) => e.button === 0 && useStore.getState().focusDir(dir.path)}
       onDoubleClick={() => useStore.getState().enterDir(dir.path)}
-      onContextMenu={(e) => {
-        const st = useStore.getState();
-        st.focusDir(dir.path);
-        const root = st.roots.find((r) => r.id === rootId);
-        if (root) openMenu(e, () => [{ label: "開く", run: () => st.enterDir(dir.path) }, "-", ...rootMenu(root, dir.path)]);
-      }}
-      className={`absolute inset-x-0 grid ${COLS} items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"}`}
-      style={{ top, height: ROW_H }}
+      onContextMenu={(e) => dirContextMenu(e, dir.path, rootId)}
+      className={`absolute inset-x-0 grid items-center gap-3 px-4 ${on ? "bg-accent-fill text-white" : "hover:bg-hover"}`}
+      style={{ top, height: ROW_H, gridTemplateColumns: template }}
       title={dir.path}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -393,10 +321,19 @@ function DirLine({ dir, top, on, where, rootId }: { dir: SubDir; top: number; on
         <span className="truncate">{dir.name}</span>
         <span className={`shrink-0 text-[11px] tabular-nums ${dim}`}>{dir.count} 件</span>
       </span>
-      <span className={`truncate ${dim}`}>{where.split("/").join(" › ")}</span>
-      <span className={`truncate ${dim}`}>フォルダ</span>
-      <span />
-      <span />
+      {columns.map((c) =>
+        c === "place" ? (
+          <span key={c} className={`truncate ${dim}`}>
+            {where.split("/").join(" › ")}
+          </span>
+        ) : c === "kind" ? (
+          <span key={c} className={`truncate ${dim}`}>
+            フォルダ
+          </span>
+        ) : (
+          <span key={c} />
+        ),
+      )}
     </div>
   );
 }
@@ -439,7 +376,7 @@ function fileMenu(): Entry[] {
 }
 
 /** 「最近の変更」の行の印：新規（新しく増えた）／更新（中身が変わった）。 */
-function ChangeBadge({ change, on }: { change: FileRow["change"]; on: boolean }) {
+export function ChangeBadge({ change, on }: { change: FileRow["change"]; on: boolean }) {
   if (!change) return null;
   const isNew = change === "new";
   const tone = on ? "bg-white/20" : isNew ? "bg-tonal text-on-tonal" : "bg-control text-fg";
@@ -480,7 +417,7 @@ function joinPlace(roots: Root[], f: FileRow): string {
   return dir ? `${root.name} › ${dir}` : root.name;
 }
 
-function EmptyList() {
+export function EmptyList() {
   const roots = useStore((s) => s.roots);
   const place = useStore((s) => s.place);
   const scanning = useStore((s) => s.scanning);
