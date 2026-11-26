@@ -40,9 +40,9 @@ export function iconKindOf(ext: string): IconKind {
   return kindOf(e);
 }
 
-/** 種類の名前（条件の選択肢）。 */
-export const KINDS: Kind[] = ["pdf", "word", "excel", "powerpoint", "text"];
-export const kindName = (k: Kind) => LABEL[k];
+/** 種類の条件の選択肢（アイコンと同じ分け方。テキストは CSV・Markdown・そのほか）。 */
+export const ICON_KINDS: IconKind[] = ["pdf", "word", "excel", "powerpoint", "csv", "markdown", "text"];
+export const iconKindName = (k: IconKind) => (k === "csv" ? "CSV" : k === "markdown" ? "Markdown" : k === "text" ? "そのほかのテキスト" : LABEL[k]);
 
 /** 扱う拡張子（ファイルを選ぶダイアログの絞り込み）。 */
 export const EXTENSIONS = Object.keys(BY_EXT);

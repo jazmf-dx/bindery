@@ -3,10 +3,11 @@
  * （docs/CONCEPT.md「探す」）。データベースから読んだ行はそのままにして、ここで写しを作る。
  */
 import type { FileRow, Place, Root, Tag } from "./api";
-import { kindLabel, kindOf, type Kind } from "./kinds";
+import { iconKindOf, kindLabel, type IconKind } from "./kinds";
 import { warn } from "./log";
 
-export type SortKey = "name" | "place" | "kind" | "date";
+export type SortKey = "name" | "place" | "kind" | "date" | "size";
+export const SORT_KEYS: SortKey[] = ["name", "place", "kind", "date", "size"];
 /** `date` は更新日（「最近の変更」では気付いた日）。 */
 export type Sort = { key: SortKey; desc: boolean };
 
@@ -16,14 +17,32 @@ export const DEFAULT_SORT: Sort = { key: "name", desc: false };
 export type Within = "today" | 7 | 30 | 365;
 
 /**
- * 一覧の上の条件（docs/CONCEPT.md「条件の組み合わせ」）。今の場所の中で絞る。
- * タグはすべて付いているもの（かつ）、種類は 1 つ、更新日はファイルの更新日時で。
+ * 一覧の上の条件（docs/CONCEPT.md「条件の組み合わせ」「ツールバーと表示の切り替え」）。今の場所の中で絞る。
+ * 条件どうしは「かつ」。タグは `tagMode` で、すべて付いているもの（all）かどれかが付いているもの（any）。
+ * 種類は選んだもののどれか。更新日はファイルの更新日時で。メモは、あるもの（true）・無いもの（false）。
  */
-export type Filters = { tags: number[]; kind: Kind | null; within: Within | null };
+export type Filters = { tags: number[]; tagMode: "all" | "any"; kinds: IconKind[]; within: Within | null; note: boolean | null };
 
-export const NO_FILTERS: Filters = { tags: [], kind: null, within: null };
+export const NO_FILTERS: Filters = { tags: [], tagMode: "all", kinds: [], within: null, note: null };
 
-export const hasFilters = (f: Filters) => f.tags.length > 0 || f.kind !== null || f.within !== null;
+export const hasFilters = (f: Filters) => f.tags.length > 0 || f.kinds.length > 0 || f.within !== null || f.note !== null;
+
+/** 条件の 1 つ（件数を数えるとき、その条件だけを外すため）。 */
+export type FilterKey = "tags" | "kinds" | "within" | "note";
+
+/** `key` の条件を外したもの。 */
+export function without(f: Filters, key: FilterKey): Filters {
+  switch (key) {
+    case "tags":
+      return { ...f, tags: [] };
+    case "kinds":
+      return { ...f, kinds: [] };
+    case "within":
+      return { ...f, within: null };
+    case "note":
+      return { ...f, note: null };
+  }
+}
 
 /** 更新日の条件の下限（ミリ秒）。 */
 export function withinSince(w: Within, now = new Date()): number {
@@ -32,9 +51,13 @@ export function withinSince(w: Within, now = new Date()): number {
 }
 
 export function passes(f: FileRow, filters: Filters, since: number | null): boolean {
-  if (filters.tags.some((t) => !f.tags.includes(t))) return false;
-  if (filters.kind !== null && kindOf(f.ext) !== filters.kind) return false;
+  if (filters.tags.length > 0) {
+    const has = (t: number) => f.tags.includes(t);
+    if (filters.tagMode === "all" ? !filters.tags.every(has) : !filters.tags.some(has)) return false;
+  }
+  if (filters.kinds.length > 0 && !filters.kinds.includes(iconKindOf(f.ext))) return false;
   if (since !== null && f.mtime < since) return false;
+  if (filters.note !== null && (f.note !== "") !== filters.note) return false;
   return true;
 }
 
@@ -72,6 +95,8 @@ export function compare(sort: Sort, recent: boolean): (a: FileRow, b: FileRow) =
         return collator.compare(kindLabel(a.ext), kindLabel(b.ext));
       case "date":
         return recent ? (a.changedAt ?? 0) - (b.changedAt ?? 0) : a.mtime - b.mtime;
+      case "size":
+        return a.size - b.size;
     }
   };
   const dir = sort.desc ? -1 : 1;
@@ -83,10 +108,25 @@ export function compare(sort: Sort, recent: boolean): (a: FileRow, b: FileRow) =
 }
 
 export function visible(all: FileRow[], query: string, filters: Filters, sort: Sort, recent: boolean, tags: Tag[]): FileRow[] {
+  return narrow(all, query, filters, tags).sort(compare(sort, recent));
+}
+
+/** 絞り込みの文字と条件に合うもの（並びはそのまま）。 */
+export function narrow(all: FileRow[], query: string, filters: Filters, tags: Tag[]): FileRow[] {
   const terms = termsOf(query);
   const tagName = new Map(tags.map((t) => [t.id, t.name]));
   const since = filters.within === null ? null : withinSince(filters.within);
-  return all.filter((f) => passes(f, filters, since) && matches(f, terms, tagName)).sort(compare(sort, recent));
+  return all.filter((f) => passes(f, filters, since) && matches(f, terms, tagName));
+}
+
+/**
+ * 条件のメニューに出す件数：`key` の条件だけを外し、ほかの条件と絞り込みの文字をかけた中で、値ごとに数える。
+ * 値は `valuesOf` が返すもの（タグは付いている id、種類は 1 つ、など）。
+ */
+export function facetCounts<V>(all: FileRow[], query: string, filters: Filters, tags: Tag[], key: FilterKey, valuesOf: (f: FileRow) => V[]): Map<V, number> {
+  const counts = new Map<V, number>();
+  for (const f of narrow(all, query, without(filters, key), tags)) for (const v of valuesOf(f)) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return counts;
 }
 
 /** 一覧の先頭に出す、今のフォルダの中のフォルダ。`count` は下の階層まで含めたファイルの数。 */
@@ -115,7 +155,7 @@ export function childDirs(roots: Root[], place: Place, narrowing: boolean): SubD
 export const parentDir = (dir: string) => (dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "");
 
 /** 列の見出しを押したとき：同じ列なら逆に、別の列なら日付は新しい順・ほかは昇順から。 */
-export const nextSort = (now: Sort, key: SortKey): Sort => (now.key === key ? { key, desc: !now.desc } : { key, desc: key === "date" });
+export const nextSort = (now: Sort, key: SortKey): Sort => (now.key === key ? { key, desc: !now.desc } : { key, desc: key === "date" || key === "size" });
 
 // 並べ替えは全体で 1 つ覚える（この端末のこのアプリだけ。読めなくても既定で動く）
 const SORT_KEY = "bindery.sort";
@@ -123,7 +163,7 @@ const SORT_KEY = "bindery.sort";
 export function loadSort(): Sort {
   try {
     const v = JSON.parse(localStorage.getItem(SORT_KEY) ?? "null") as Sort | null;
-    if (v && ["name", "place", "kind", "date"].includes(v.key) && typeof v.desc === "boolean") return v;
+    if (v && SORT_KEYS.includes(v.key) && typeof v.desc === "boolean") return v;
   } catch {
     // 既定で動く
   }
@@ -135,5 +175,69 @@ export function saveSort(sort: Sort) {
     localStorage.setItem(SORT_KEY, JSON.stringify(sort));
   } catch (e) {
     warn("save sort", e);
+  }
+}
+
+/** 一覧の形（docs/CONCEPT.md「ツールバーと表示の切り替え」）：1 行ずつのリストか、種類のアイコンを並べるグリッドか。 */
+export type Layout = "list" | "grid";
+
+/** リストの列。名前の列はいつも出すので、ここには入れない。 */
+export type Column = "place" | "kind" | "date" | "size" | "tags";
+export const COLUMNS: Column[] = ["place", "kind", "date", "size", "tags"];
+export const DEFAULT_COLUMNS: Column[] = ["place", "kind", "date", "tags"];
+
+/** 左右のパネルの幅（px）：はじめ・いちばん狭い・いちばん広い。 */
+export const PANEL_WIDTH = {
+  sidebar: { initial: 240, min: 190, max: 420 },
+  details: { initial: 320, min: 260, max: 560 },
+} as const;
+export type Panel = keyof typeof PANEL_WIDTH;
+
+export const clampWidth = (panel: Panel, px: number) => Math.round(Math.min(PANEL_WIDTH[panel].max, Math.max(PANEL_WIDTH[panel].min, px)));
+
+/** この端末の画面の設定（データベースには入れない。読めなくても既定で動く）。 */
+export type Prefs = {
+  layout: Layout;
+  columns: Column[];
+  sidebarOpen: boolean;
+  detailsOpen: boolean;
+  sidebarWidth: number;
+  detailsWidth: number;
+};
+
+const PREFS_KEY = "bindery.prefs";
+
+export const DEFAULT_PREFS: Prefs = {
+  layout: "list",
+  columns: DEFAULT_COLUMNS,
+  sidebarOpen: true,
+  detailsOpen: true,
+  sidebarWidth: PANEL_WIDTH.sidebar.initial,
+  detailsWidth: PANEL_WIDTH.details.initial,
+};
+
+export function loadPrefs(): Prefs {
+  try {
+    const v = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null") as Partial<Prefs> | null;
+    if (!v || typeof v !== "object") return DEFAULT_PREFS;
+    const num = (x: unknown, panel: Panel) => (typeof x === "number" && Number.isFinite(x) ? clampWidth(panel, x) : PANEL_WIDTH[panel].initial);
+    return {
+      layout: v.layout === "grid" ? "grid" : "list",
+      columns: Array.isArray(v.columns) ? COLUMNS.filter((c) => v.columns!.includes(c)) : DEFAULT_COLUMNS,
+      sidebarOpen: v.sidebarOpen !== false,
+      detailsOpen: v.detailsOpen !== false,
+      sidebarWidth: num(v.sidebarWidth, "sidebar"),
+      detailsWidth: num(v.detailsWidth, "details"),
+    };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
+export function savePrefs(prefs: Prefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch (e) {
+    warn("save prefs", e);
   }
 }

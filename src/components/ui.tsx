@@ -1,5 +1,6 @@
 /** 画面のあちこちで使う小さな部品。 */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Check } from "lucide-react";
 import { composing } from "../lib/ime";
 
 /** サイドバーのまとまり。`drop` を渡すと、見出しがドラッグの落とし先になる（DragLayer.tsx）。 */
@@ -63,6 +64,100 @@ export function HoverButton({ label, onClick, children }: { label: string; onCli
       }}
     >
       {children}
+    </button>
+  );
+}
+
+/**
+ * ボタンの下に開く小さなメニュー（条件・表示）。ウィンドウに対して置く（横に流れる行で切れないように）。
+ * 外を押すか Esc で閉じる。Esc は一覧の「選ぶのをやめる」へ届けない。
+ */
+export function Popover({
+  anchor,
+  onClose,
+  width = "w-56",
+  children,
+}: {
+  anchor: HTMLElement | null;
+  onClose: () => void;
+  width?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const place = () => {
+      if (!anchor) return;
+      const r = anchor.getBoundingClientRect();
+      const w = ref.current?.offsetWidth ?? 0;
+      setAt({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), top: r.bottom + 4 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [anchor]);
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !anchor?.contains(t)) onClose();
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [anchor, onClose]);
+  return (
+    <div
+      ref={ref}
+      style={{ position: "fixed", left: at?.left ?? 0, top: at?.top ?? 0, visibility: at ? "visible" : "hidden" }}
+      className={`z-40 ${width} max-h-[60vh] overflow-y-auto rounded-lg border border-line bg-raised p-1 text-[12px] shadow-xl`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** メニューの見出し。 */
+export const MenuHeading = ({ children }: { children: ReactNode }) => <div className="px-2 pt-1.5 pb-1 text-[11px] font-semibold text-dim">{children}</div>;
+
+/** メニューの選択肢：印（複数選べるものは四角、1 つだけのものは丸）・名前・件数。 */
+export function MenuOption({
+  on,
+  single,
+  count,
+  disabled,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  single?: boolean;
+  count?: number;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left enabled:hover:bg-hover disabled:off ${!on && count === 0 ? "text-dim" : ""}`}
+    >
+      <span
+        className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center border ${single ? "rounded-full" : "rounded-sm"} ${
+          on ? "border-accent bg-accent-fill text-white" : "border-edge"
+        }`}
+      >
+        {on && <Check size={10} strokeWidth={3} />}
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">{children}</span>
+      {count !== undefined && <span className="shrink-0 text-dim tabular-nums">{count}</span>}
     </button>
   );
 }

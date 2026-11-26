@@ -20,8 +20,8 @@ export function Details() {
   const chosen = new Set(selectedIds);
   const selected = files.filter((f) => chosen.has(f.id));
   return (
-    <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-line bg-panel" {...dragRegion()}>
-      <div className="flex flex-col gap-4 p-4 pt-[calc(var(--titlebar)+16px)]">
+    <aside className="flex w-full shrink-0 flex-col overflow-y-auto border-l border-line bg-panel" {...dragRegion()}>
+      <div className="flex flex-col gap-4 p-4 pt-3">
         {selected.length === 0 ? (
           <div className="text-dim">ファイルを選ぶと、情報・タグ・仮想フォルダがここに出ます。スペースで Quick Look</div>
         ) : (
