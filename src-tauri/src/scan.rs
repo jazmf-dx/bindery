@@ -194,10 +194,14 @@ struct Known {
 pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     let now = db::now_ms();
-    // 登録してから最初の読み込みで見つけたものは「新しく増えた」に入れない（docs/CONCEPT.md「最近の変更」）
-    let scanned = tx.query_row("SELECT scanned FROM roots WHERE id = ?1", [root_id], |r| {
-        r.get::<_, i64>(0)
-    })? != 0;
+    // 登録してから最初の読み込みと、そのあとの猶予（`db::NEW_GRACE_MS`）のうちに見つけたものは
+    // 「新しく増えた」に入れない（docs/CONCEPT.md「最近の変更」。同期フォルダは、登録の直後は一部しか見えないことがある）
+    let (scanned, added_at) = tx.query_row(
+        "SELECT scanned, added_at FROM roots WHERE id = ?1",
+        [root_id],
+        |r| Ok((r.get::<_, i64>(0)? != 0, r.get::<_, i64>(1)?)),
+    )?;
+    let notice_new = scanned && now - added_at >= db::NEW_GRACE_MS;
     // このフォルダで覚えているもの（パスで引く）
     let mut known: HashMap<String, Known> = HashMap::new();
     {
@@ -285,7 +289,7 @@ pub fn apply(conn: &mut Connection, root_id: i64, found: Vec<Found>) -> rusqlite
                 )?;
             }
             None => {
-                let (changed_at, kind) = if scanned {
+                let (changed_at, kind) = if notice_new {
                     (Some(now), Some("new"))
                 } else {
                     (None, None)
@@ -459,6 +463,15 @@ mod tests {
         (dir, conn, id)
     }
 
+    /// 登録してから猶予（`db::NEW_GRACE_MS`）以上たったことにする。
+    fn age_root(conn: &Connection, root: i64) {
+        conn.execute(
+            "UPDATE roots SET added_at = added_at - ?2 WHERE id = ?1",
+            rusqlite::params![root, db::NEW_GRACE_MS],
+        )
+        .unwrap();
+    }
+
     fn scan(conn: &mut Connection, root: i64, dir: &Path) {
         apply(conn, root, walk(dir, true)).unwrap();
     }
@@ -623,6 +636,8 @@ mod tests {
         // 何も変わらなければ出ない
         scan(&mut conn, root, d);
         assert!(changes(&conn).is_empty());
+        // 登録からの猶予が過ぎたことにする
+        age_root(&conn, root);
         // 中身が変わった・増えた
         fs::write(d.join("a.pdf"), "changed").unwrap();
         fs::write(d.join("c.pdf"), "c").unwrap();
@@ -639,6 +654,23 @@ mod tests {
         );
         let r = &db::list_roots(&conn).unwrap()[0];
         assert_eq!(r.recent, 2);
+    }
+
+    #[test]
+    fn files_found_within_the_grace_period_after_registering_are_not_new() {
+        let (dir, mut conn, root) = setup();
+        let d = dir.path();
+        fs::write(d.join("a.pdf"), "a").unwrap();
+        scan(&mut conn, root, d);
+        // 同期フォルダのように、あとから残りが見えてきた（猶予のうち）
+        fs::write(d.join("b.pdf"), "b").unwrap();
+        scan(&mut conn, root, d);
+        assert!(changes(&conn).is_empty());
+        // 猶予が過ぎたあとに増えたものは「新規」
+        age_root(&conn, root);
+        fs::write(d.join("c.pdf"), "c").unwrap();
+        scan(&mut conn, root, d);
+        assert_eq!(changes(&conn), [("c.pdf".into(), "new".into())]);
     }
 
     #[test]

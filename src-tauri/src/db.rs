@@ -73,6 +73,10 @@ const SCHEMA: &[&str] = &[
 /// 「最近の変更」に出す日数（docs/CONCEPT.md「最近の変更」）。設定画面ができるまでは固定。
 pub const RECENT_DAYS: i64 = 7;
 
+/// 登録してからこの間に見つけたものは「新しく増えた」に入れない（ミリ秒）。
+/// 同期フォルダ（DirectCloud など）は、登録の直後は一部のファイルしか見えず、あとから残りが現れるため。
+pub const NEW_GRACE_MS: i64 = 24 * 3_600_000;
+
 /// 「最近の変更」に出すものの下限（気付いた日時、ミリ秒）。
 pub fn recent_since() -> i64 {
     now_ms() - RECENT_DAYS * 86_400_000
