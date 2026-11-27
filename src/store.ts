@@ -58,6 +58,8 @@ type State = {
   subdirs: SubDir[];
   /** 一覧で選んでいるフォルダの行（ファイルの選択とは同時に持たない）。 */
   dirFocus: string | null;
+  /** スペースのプレビューを出しているか（出すのは、選んでいる 1 つ目のファイル）。 */
+  previewOpen: boolean;
   /** 絞り込みの文字（今の場所の中で絞る。場所を変えても残す）。 */
   query: string;
   /** 一覧の上の条件（タグ・種類・更新日）。絞り込みと同じく、場所を変えても残す。 */
@@ -126,7 +128,9 @@ type State = {
   removeRoot: (id: number) => Promise<void>;
 
   openSelected: () => void;
+  /** スペースのプレビュー（一覧の上に重ねる）を出す・閉じる。 */
   quickLook: () => void;
+  closePreview: () => void;
   revealSelected: () => void;
   copyPaths: () => void;
   /** 行方不明のファイル（1 件）を、ダイアログで選んだファイルへつなぎ直す。 */
@@ -189,6 +193,7 @@ export const useStore = create<State>((set, get) => ({
   files: [],
   subdirs: [],
   dirFocus: null,
+  previewOpen: false,
   query: "",
   filters: NO_FILTERS,
   sort: loadSort(),
@@ -455,8 +460,11 @@ export const useStore = create<State>((set, get) => ({
     if (ids.length) api.openFiles(ids).catch((e) => message(String(e), { title: "開けませんでした", kind: "warning" }));
   },
   quickLook: () => {
-    api.quickLook(get().selected).catch((e) => message(String(e), { title: "Quick Look", kind: "warning" }));
+    // 選んでいるファイルがあるときだけ出す（フォルダの行を選んでいるときは出さない）
+    if (get().previewOpen) set({ previewOpen: false });
+    else if (get().selected.length > 0 && get().dirFocus === null) set({ previewOpen: true });
   },
+  closePreview: () => set({ previewOpen: false }),
   revealSelected: () => {
     const id = get().selected[0];
     if (id !== undefined) api.revealFile(id).catch((e) => message(String(e), { title: "表示できませんでした", kind: "warning" }));

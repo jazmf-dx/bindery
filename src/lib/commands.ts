@@ -29,7 +29,7 @@ const rowStep = () => (grid() ? st().gridCols : 1);
 
 export const COMMANDS: Command[] = [
   // ファイル
-  { id: "file.quickLook", label: "Quick Look", keys: ["Space"], run: () => st().quickLook() },
+  { id: "file.quickLook", label: "プレビュー", keys: ["Space"], run: () => st().quickLook() },
   { id: "file.open", label: "開く", keys: ["Enter", "Mod+ArrowDown"], run: () => st().openSelected() },
   { id: "file.reveal", label: "Finder / エクスプローラーで表示", keys: ["Mod+Shift+R"], run: () => st().revealSelected() },
   { id: "file.copyPath", label: "パスをコピー", keys: ["Mod+Alt+C"], run: () => st().copyPaths() },

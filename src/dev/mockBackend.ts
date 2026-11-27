@@ -167,9 +167,14 @@ export function installMockBackend() {
         }
         case "open_files":
         case "reveal_file":
-        case "quick_look":
           console.info(`mock: ${cmd}`, a);
           return null;
+        case "file_preview": {
+          // ブラウザ用：テキストだけ出す。ほかは「作れない」と同じ扱い
+          const f = files.find((x) => x.id === Number(a.id));
+          if (!f || !["txt", "md", "csv", "tsv"].includes(f.ext)) return null;
+          return { kind: "text", text: `（モック）${f.name} の中身\n\n1 行目\n2 行目\n`, truncated: false, format: f.ext === "md" ? "markdown" : f.ext === "csv" ? "csv" : "plain" };
+        }
         case "list_tags":
           return tags
             .map((t) => ({ ...t, count: files.filter((f) => f.tags.includes(t.id)).length }))

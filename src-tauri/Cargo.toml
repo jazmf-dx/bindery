@@ -17,7 +17,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # macos-private-api: a transparent window on macOS, for the sidebar's
 # translucent material (lib.rs, `main_window`).
-tauri = { version = "2", features = ["macos-private-api"] }
+# protocol-asset: the in-app preview shows a PDF / document preview from its place (preview.rs).
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -40,8 +41,9 @@ walkdir = "2.5.0"
 # The hash used to find a moved file again (scan.rs, `hash_pending`).
 sha2 = "0.11.0"
 hex = "0.4.3"
-
-[dev-dependencies]
+# Reading Shift_JIS / UTF-16 texts for the preview (preview.rs). The same version stockroom uses.
+encoding_rs = "0.8"
+# Working folders for the preview that macOS / Windows make (preview.rs, win_office.rs).
 tempfile = "3.27.0"
 
 # Copied from stockroom (desktop-platform playbook/new-tool.md).

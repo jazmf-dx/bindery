@@ -129,15 +129,43 @@ pub fn reveal_file(lib: State<Shared>, id: i64) -> CmdResult<()> {
     tauri_plugin_opener::reveal_item_in_dir(&p[0]).map_err(err)
 }
 
-/// Quick Look（docs/CONCEPT.md「プレビュー」）。開いていれば閉じる。
+/// スペースで見るプレビュー（docs/CONCEPT.md「プレビュー」、preview.rs）。
+/// 作れないとき・中身が合わないときは `None`。
 #[tauri::command]
-pub fn quick_look(lib: State<Shared>, ids: Vec<i64>) -> CmdResult<()> {
-    let p = if ids.is_empty() {
-        Vec::new()
-    } else {
-        paths(&lib, &ids)?
+pub async fn file_preview(
+    app: AppHandle,
+    lib: State<'_, Shared>,
+    id: i64,
+) -> CmdResult<Option<crate::preview::Preview>> {
+    let info = lib.with(|c| db::preview_info(c, id))?;
+    let Some((path, ext, size, mtime)) = info else {
+        return Err("ファイルが見つかりません（行方不明）".into());
     };
-    crate::quicklook::toggle(&p)
+    let previews = app
+        .path()
+        .app_data_dir()
+        .map_err(err)?
+        .join("previews");
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::preview::{self, Preview};
+        let path = PathBuf::from(path);
+        let made = match crate::scan::kind_of(&ext) {
+            Some("text") => preview::text(&path, &ext),
+            Some("pdf") => preview::is_pdf(&path).then_some(Preview::Pdf { path: path.clone() }),
+            Some(_) => preview::document(&previews, id, size, mtime, &path, &ext),
+            None => None,
+        };
+        // 画面（asset プロトコル）が読めるのは、いま見せる PDF と、作ったプレビューの置き場所だけ
+        let scope = app.asset_protocol_scope();
+        match &made {
+            Some(Preview::Pdf { path }) => scope.allow_file(path).map_err(err)?,
+            Some(Preview::Html { dir, .. }) => scope.allow_directory(dir, true).map_err(err)?,
+            _ => {}
+        }
+        Ok(made)
+    })
+    .await
+    .map_err(err)?
 }
 
 // ------------------------------------------------------------------ タグ
