@@ -9,6 +9,7 @@ import { Details } from "./components/Details";
 import { DragLayer } from "./components/DragLayer";
 import { DropZone } from "./components/DropZone";
 import { FileList } from "./components/FileList";
+import { Preview } from "./components/Preview";
 import { ResizeHandle } from "./components/ResizeHandle";
 import { ShortcutHelp } from "./components/ShortcutHelp";
 import { Sidebar } from "./components/Sidebar";
@@ -46,9 +47,10 @@ export default function App() {
       <SidePanel panel="sidebar" open={prefs.sidebarOpen} width={prefs.sidebarWidth} resizing={resizing} onResizing={setResizing}>
         <Sidebar />
       </SidePanel>
-      <main className="flex min-w-0 flex-1 flex-col bg-bg">
+      <main className="relative flex min-w-0 flex-1 flex-col bg-bg">
         <Toolbar />
         <FileList />
+        <Preview />
       </main>
       <SidePanel panel="details" open={prefs.detailsOpen} width={prefs.detailsWidth} resizing={resizing} onResizing={setResizing}>
         <Details />

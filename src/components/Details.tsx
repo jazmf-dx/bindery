@@ -2,7 +2,7 @@
  * 詳細パネル（docs/CONCEPT.md「プレビュー」「サイドバー」）。選んだファイルの情報・タグ・仮想フォルダ・メモと、開く操作。
  * 複数を選んだときは、タグ・仮想フォルダの付け外しをまとめて行う（一部にだけ付いているものは薄く出す）。
  * メモは 1 件を選んだときだけ書ける。行方不明のファイルは、つなぎ直すか記録を外せる。
- * 小さなプレビューはあとで（CSP の判断と一緒に）。今は Quick Look（スペース）で大きく見る。
+ * 小さなプレビューはあとで（CSP の判断と一緒に）。今はスペースで一覧の上に大きく出す（Preview.tsx）。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, Eye, FileText, FolderSearch, Folder, Link2, SquareArrowOutUpRight, Tag as TagIcon, Trash2, X } from "lucide-react";
@@ -28,7 +28,7 @@ export function Details() {
           <FileText size={28} strokeWidth={1.5} className="text-dim/70" />
           <div>ファイルを選ぶと、情報・タグ・仮想フォルダ・メモがここに出ます</div>
           <div>
-            <kbd className="rounded border border-b-2 border-line bg-raised px-1.5 font-sans text-[11px] text-fg">スペース</kbd> で Quick Look
+            <kbd className="rounded border border-b-2 border-line bg-raised px-1.5 font-sans text-[11px] text-fg">スペース</kbd> でプレビュー
           </div>
         </div>
       ) : (
@@ -137,7 +137,7 @@ function Actions({ files }: { files: FileRow[] }) {
   return (
     <div className="mt-4 grid grid-cols-2 gap-1.5">
       {btn("file.open", <SquareArrowOutUpRight size={14} />, "開く")}
-      {btn("file.quickLook", <Eye size={14} />, "Quick Look")}
+      {btn("file.quickLook", <Eye size={14} />, "プレビュー")}
       {btn("file.reveal", <FolderSearch size={14} />, "場所を表示", off || files.length > 1)}
       {btn("file.copyPath", <Copy size={14} />, "パスをコピー", false)}
     </div>

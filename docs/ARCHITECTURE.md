@@ -17,7 +17,7 @@
 | データ | `src-tauri/src/db.rs` | `app_data_dir()/bindery.db`（SQLite）。表は `roots`（登録フォルダ。`recursive` でサブフォルダまで読むか、`scanned` で登録してから 1 度読んだか）・`files`（見つけたファイル。`dir` は登録フォルダから見た中のフォルダ、`note` はメモ、`changed_at`・`change_kind` はアプリが変化に気付いた日時と中身）・`tags` と `file_tags`・`vfolders`（`parent_id` で入れ子）と `vfolder_files`。版は `PRAGMA user_version` と `SCHEMA` の手順 |
 | 照合 | `src-tauri/src/scan.rs` | フォルダを読む（`walk`）・記録を合わせる（`apply`。変化に気付いた日時もここで書く）・ハッシュでつなぎ直す（`record_hash`）・手でつなぎ直す（`relink`） |
 | 裏の仕事 | `src-tauri/src/library.rs` | 読み込みとハッシュの計算を裏のスレッドで。変わったら `files-changed`、読み込みの始まりと終わりに `scan-state` を画面へ送る |
-| Quick Look | `src-tauri/src/quicklook.rs` | macOS は `qlmanage -p`、Windows は既定のアプリ |
+| プレビュー | `src-tauri/src/preview.rs`・`win_office.rs`（Windows）・`src/components/Preview.tsx` | スペースで一覧の上に出す。`file_preview` が PDF（そのまま）・文書（macOS は `qlmanage -p -o`、Windows は Office で PDF 化して `previews/` に保存）・テキスト（先頭を読む）の中身を返す。画面は asset プロトコルで PDF／HTML を iframe に出す |
 | 土台 | `src-tauri/src/lib.rs`、`proxy.rs` | プラグインの配線・ログ・ウィンドウ、更新のためのプロキシ |
 
 ## 時間のかかる仕事

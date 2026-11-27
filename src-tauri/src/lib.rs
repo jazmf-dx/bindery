@@ -5,9 +5,11 @@
 pub mod commands;
 pub mod db;
 pub mod library;
+pub mod preview;
 pub mod proxy;
-pub mod quicklook;
 pub mod scan;
+#[cfg(windows)]
+pub mod win_office;
 
 use commands::*;
 
@@ -125,7 +127,7 @@ pub fn run() {
             list_files,
             open_files,
             reveal_file,
-            quick_look,
+            file_preview,
             list_tags,
             add_tag,
             set_tag,

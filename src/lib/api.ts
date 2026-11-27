@@ -51,6 +51,12 @@ export type FileRow = {
   change: "new" | "updated" | null;
 };
 
+/** プレビューの中身（src-tauri/src/preview.rs `Preview`）。 */
+export type FilePreview =
+  | { kind: "pdf"; path: string }
+  | { kind: "html"; dir: string; file: string }
+  | { kind: "text"; text: string; truncated: boolean; format: "plain" | "markdown" | "csv" | "tsv" };
+
 /** 一覧に出すもの。サイドバーの項目（src-tauri/src/db.rs `Place`）。 */
 export type Place =
   | { kind: "all" }
@@ -93,8 +99,8 @@ export const api = {
   openFiles: (ids: number[]) => invoke<void>("open_files", { ids }),
   /** Finder / エクスプローラーで表示する。 */
   revealFile: (id: number) => invoke<void>("reveal_file", { id }),
-  /** Quick Look。開いていれば閉じる（Windows は既定のアプリで開く）。 */
-  quickLook: (ids: number[]) => invoke<void>("quick_look", { ids }),
+  /** スペースで見るプレビュー（src-tauri/src/preview.rs）。初めての文書は作るので少しかかる。作れないときは null。 */
+  filePreview: (id: number) => invoke<FilePreview | null>("file_preview", { id }),
 
   listTags: () => invoke<Tag[]>("list_tags"),
   /** その名前のタグを付ける（無ければ作る）。付けたタグの id を返す。 */
