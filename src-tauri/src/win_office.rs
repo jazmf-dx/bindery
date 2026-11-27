@@ -147,9 +147,7 @@ pub fn to_pdf(src: &Path, ext: &str, out: &Path) -> Result<(), Error> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() < TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(100))
-            }
+            Ok(None) if start.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();

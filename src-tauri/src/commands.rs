@@ -141,11 +141,7 @@ pub async fn file_preview(
     let Some((path, ext, size, mtime)) = info else {
         return Err("ファイルが見つかりません（行方不明）".into());
     };
-    let previews = app
-        .path()
-        .app_data_dir()
-        .map_err(err)?
-        .join("previews");
+    let previews = app.path().app_data_dir().map_err(err)?.join("previews");
     tauri::async_runtime::spawn_blocking(move || {
         use crate::preview::{self, Preview};
         let path = PathBuf::from(path);

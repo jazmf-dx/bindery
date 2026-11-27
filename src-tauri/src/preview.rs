@@ -272,7 +272,9 @@ mod tests {
         let big = dir.path().join("big.txt");
         fs::write(&big, "あ".repeat(TEXT_MAX)).unwrap();
         match text(&big, "txt") {
-            Some(Preview::Text { text, truncated, .. }) => {
+            Some(Preview::Text {
+                text, truncated, ..
+            }) => {
                 assert!(truncated);
                 // 切れた文字の置き換えの印は残さない
                 assert!(!text.ends_with('\u{FFFD}'));
@@ -346,7 +348,11 @@ mod tests {
         }
         // 大きさ・更新日時が変わったら作り直し、前のものは捨てる
         let _ = document(&previews, 7, 100, 300, &docx, "docx");
-        let left: Vec<_> = fs::read_dir(&previews).unwrap().flatten().map(|e| e.file_name()).collect();
+        let left: Vec<_> = fs::read_dir(&previews)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
         assert!(left.len() <= 1, "{left:?}");
     }
 }

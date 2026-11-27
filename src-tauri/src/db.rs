@@ -363,7 +363,10 @@ pub fn paths_of(conn: &Connection, ids: &[i64]) -> rusqlite::Result<Vec<String>>
 }
 
 /// プレビューに要るもの：パス・拡張子・大きさ・更新日時。行方不明なら `None`。
-pub fn preview_info(conn: &Connection, id: i64) -> rusqlite::Result<Option<(String, String, i64, i64)>> {
+pub fn preview_info(
+    conn: &Connection,
+    id: i64,
+) -> rusqlite::Result<Option<(String, String, i64, i64)>> {
     conn.query_row(
         "SELECT path, ext, size, mtime FROM files WHERE id = ?1 AND missing = 0",
         [id],
