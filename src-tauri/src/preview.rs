@@ -27,6 +27,10 @@ pub enum Preview {
         dir: PathBuf,
         file: String,
     },
+    /// Quick Look がプレビューを作れなかった文書の、1 ページ目の画像（`data:` の URL）。
+    Image {
+        src: String,
+    },
     Text {
         text: String,
         /// 先頭だけ読んだ（`TEXT_MAX` を超えた）。
@@ -135,7 +139,38 @@ pub fn stored(previews: &Path, stem: &str) -> Option<Preview> {
         });
     }
     let pdf = dir.join("Preview.pdf");
-    is_pdf(&pdf).then_some(Preview::Pdf { path: pdf })
+    if is_pdf(&pdf) {
+        return Some(Preview::Pdf { path: pdf });
+    }
+    let png = previews.join(format!("{stem}.png"));
+    let data = fs::read(&png).ok()?;
+    Some(Preview::Image {
+        src: format!("data:image/png;base64,{}", base64(&data)),
+    })
+}
+
+/// 標準の base64（画像を `data:` の URL にして画面へ渡すだけなので、依存は足さずに書く）。
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// オフィス文書などのプレビュー。なければ今作る。この環境で作れなければ `None`。
@@ -180,48 +215,82 @@ fn remove_old(previews: &Path, id: i64, keep: &str) {
     }
 }
 
+/// Quick Look（`qlmanage`）を動かす。壊れた文書で止まることがある（普通は 1 秒もかからない）ので、20 秒で諦める。
+/// 失敗の理由はログに残す（プレビューが出ない原因を後から追えるように）。
 #[cfg(target_os = "macos")]
-fn make(previews: &Path, stem: &str, path: &Path, _ext: &str) -> Option<Preview> {
+fn run_quicklook(args: &[&str], out: &Path, path: &Path) -> bool {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    // qlmanage は出力先に `<ファイル名>.qlpreview/` を書く。結果と同じ場所の一時フォルダに作って、名前を変えて置く
-    let tmp = tempfile::Builder::new()
-        .prefix(".ql-")
-        .tempdir_in(previews)
-        .ok()?;
-    let mut child = Command::new("/usr/bin/qlmanage")
-        .args(["-p", "-o"])
-        .arg(tmp.path())
+    let spawned = Command::new("/usr/bin/qlmanage")
+        .args(args)
+        .arg(out)
         .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    // 壊れた文書で止まることがある。普通は 1 秒もかからない
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("{}: qlmanage を起動できませんでした: {e}", path.display());
+            return false;
+        }
+    };
     let start = Instant::now();
-    let ok = loop {
+    loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
+            Ok(Some(status)) => {
+                if !status.success() {
+                    log::warn!(
+                        "{}: qlmanage {args:?} が失敗しました（{status}）",
+                        path.display()
+                    );
+                }
+                return status.success();
+            }
             Ok(None) if start.elapsed() < Duration::from_secs(20) => {
                 std::thread::sleep(Duration::from_millis(50))
             }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break false;
+                log::warn!(
+                    "{}: qlmanage {args:?} が 20 秒で終わりませんでした",
+                    path.display()
+                );
+                return false;
             }
         }
-    };
-    let made = tmp
-        .path()
-        .join(format!("{}.qlpreview", path.file_name()?.to_string_lossy()));
-    if !ok || !(made.join("Preview.html").is_file() || made.join("Preview.pdf").is_file()) {
-        return None;
     }
-    let dest = previews.join(format!("{stem}.qlpreview"));
-    let _ = fs::remove_dir_all(&dest);
-    fs::rename(&made, &dest).ok()?;
-    stored(previews, stem)
+}
+
+/// macOS：まず Quick Look のプレビュー（HTML か PDF）。作れなければ、1 ページ目の画像（サムネイル）で代える。
+#[cfg(target_os = "macos")]
+fn make(previews: &Path, stem: &str, path: &Path, _ext: &str) -> Option<Preview> {
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    // qlmanage は出力先に `<ファイル名>.qlpreview/` か `<ファイル名>.png` を書く。結果と同じ場所の一時フォルダに作って、名前を変えて置く
+    let tmp = tempfile::Builder::new()
+        .prefix(".ql-")
+        .tempdir_in(previews)
+        .ok()?;
+    let made = tmp.path().join(format!("{name}.qlpreview"));
+    let ok = run_quicklook(&["-p", "-o"], tmp.path(), path);
+    if ok && (made.join("Preview.html").is_file() || made.join("Preview.pdf").is_file()) {
+        let dest = previews.join(format!("{stem}.qlpreview"));
+        let _ = fs::remove_dir_all(&dest);
+        fs::rename(&made, &dest).ok()?;
+        return stored(previews, stem);
+    }
+    log::warn!(
+        "{}: Quick Look のプレビューを作れませんでした。1 ページ目の画像で代えます",
+        path.display()
+    );
+    let png = tmp.path().join(format!("{name}.png"));
+    if run_quicklook(&["-t", "-s", "1600", "-o"], tmp.path(), path) && png.is_file() {
+        fs::rename(&png, previews.join(format!("{stem}.png"))).ok()?;
+        return stored(previews, stem);
+    }
+    log::warn!("{}: 1 ページ目の画像も作れませんでした", path.display());
+    None
 }
 
 #[cfg(windows)]
@@ -284,6 +353,26 @@ mod tests {
         let bin = dir.path().join("b.txt");
         fs::write(&bin, b"ab\0cd").unwrap();
         assert_eq!(text(&bin, "txt"), None);
+    }
+
+    #[test]
+    fn base64_matches_the_standard_form() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn a_thumbnail_stands_in_when_there_is_no_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        fs::write(p.join("3-1-2.png"), b"\x89PNG").unwrap();
+        match stored(p, "3-1-2") {
+            Some(Preview::Image { src }) => assert!(src.starts_with("data:image/png;base64,")),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

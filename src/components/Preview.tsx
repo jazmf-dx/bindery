@@ -106,6 +106,13 @@ function Body({ preview, error, name }: { preview: FilePreview | null | undefine
       </Note>
     );
   if (preview === null) return <Note>このファイルはプレビューできません。［開く］で既定のアプリで見られます。</Note>;
+  if (preview.kind === "image")
+    return (
+      <div className="absolute inset-0 flex flex-col items-center gap-2 overflow-auto p-6">
+        <img src={preview.src} alt={name} draggable={false} className="min-h-0 max-w-full flex-1 rounded-md object-contain shadow-lg" />
+        <div className="shrink-0 text-[11px] text-dim">1 ページ目だけを出しています。全体は［開く］で見られます。</div>
+      </div>
+    );
   if (preview.kind === "text")
     return (
       <div className="absolute inset-0 overflow-auto">
