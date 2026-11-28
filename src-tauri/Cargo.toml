@@ -1,6 +1,6 @@
 [package]
 name = "bindery"
-version = "0.6.0"
+version = "0.6.1"
 description = "PDF・オフィス文書・テキストを、元の場所に置いたまま整理する"
 authors = ["jazmf-dx"]
 edition = "2021"
