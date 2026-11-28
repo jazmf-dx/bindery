@@ -55,6 +55,8 @@ export type FileRow = {
 export type FilePreview =
   | { kind: "pdf"; path: string }
   | { kind: "html"; dir: string; file: string }
+  /** Quick Look がプレビューを作れなかった文書の、1 ページ目の画像（`data:` の URL）。 */
+  | { kind: "image"; src: string }
   | { kind: "text"; text: string; truncated: boolean; format: "plain" | "markdown" | "csv" | "tsv" };
 
 /** 一覧に出すもの。サイドバーの項目（src-tauri/src/db.rs `Place`）。 */
